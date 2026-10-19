@@ -3,7 +3,7 @@ param(
     [int] $Quantity = 65,
 
     [ValidateScript({ $_ -gt 0 })]
-    [double] $Price = 92.5,
+    [decimal] $Price,
 
     [ValidateSet("B", "S")]
     [string] $Side = "B",
@@ -127,6 +127,25 @@ while (-not $selected) {
 }
 
 $contract = $contracts[$selectedIndex]
+if (-not $PSBoundParameters.ContainsKey("Price")) {
+    while ($true) {
+        $priceInput = Read-Host ("Enter limit price for {0} {1} {2}" -f `
+            $contract.OptionType, $contract.StrikePrice, $contract.Expiry)
+        $enteredPrice = [decimal]::Zero
+        $validPrice = [decimal]::TryParse(
+            $priceInput,
+            [Globalization.NumberStyles]::AllowDecimalPoint,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [ref] $enteredPrice
+        )
+        if ($validPrice -and $enteredPrice -gt 0) {
+            $Price = $enteredPrice
+            break
+        }
+        Write-Host "Enter a positive price using a decimal point (for example, 92.5)." -ForegroundColor Red
+    }
+}
+
 $priceText = $Price.ToString("0.################", [cultureinfo]::InvariantCulture)
 $orderSide = "Buy"
 if ($Side -eq "S") {
