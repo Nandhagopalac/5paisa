@@ -22,6 +22,94 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+st.markdown(
+    """
+    <style>
+    :root {
+        --text-color: #1e293b;
+        --background-color: #f3f6fb;
+        --secondary-background-color: #ffffff;
+    }
+
+    .stApp {
+        background: #f3f6fb;
+        color: #1e293b !important;
+    }
+
+    [data-testid="stAppViewContainer"] {
+        background: #f3f6fb;
+        color: #1e293b !important;
+    }
+
+    [data-testid="stHeader"] {
+        background: rgba(243, 246, 251, 0.9);
+    }
+
+    [data-testid="stMain"] {
+        background: transparent;
+    }
+
+    .block-container {
+        max-width: 1440px;
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+    }
+
+    [data-testid="stAppViewContainer"] h1,
+    [data-testid="stAppViewContainer"] h2,
+    [data-testid="stAppViewContainer"] h3 {
+        color: #14213d !important;
+        letter-spacing: -0.025em;
+    }
+
+    [data-testid="stMarkdownContainer"],
+    [data-testid="stMarkdownContainer"] p,
+    [data-testid="stMarkdownContainer"] li,
+    [data-testid="stMarkdownContainer"] span,
+    [data-testid="stExpander"] p,
+    [data-testid="stExpander"] span,
+    [data-testid="stAlert"] p,
+    [data-testid="stAlert"] span {
+        color: #1e293b !important;
+    }
+
+    [data-testid="stMetric"] {
+        padding: 1rem 1.15rem;
+        background: #ffffff;
+        border: 1px solid #e3eaf3;
+        border-radius: 14px;
+        box-shadow: 0 4px 14px rgba(20, 33, 61, 0.045);
+    }
+
+    [data-testid="stMetricLabel"] {
+        color: #64748b !important;
+    }
+
+    [data-testid="stMetricValue"] {
+        color: #14213d !important;
+    }
+
+    [data-testid="stDataFrame"] {
+        border: 1px solid #e3eaf3;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 4px 14px rgba(20, 33, 61, 0.04);
+    }
+
+    [data-testid="stExpander"] {
+        background: #ffffff;
+        border: 1px solid #e3eaf3;
+        border-radius: 12px;
+    }
+
+    [data-testid="stAlert"] {
+        border-radius: 10px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # --- Setup Logging ---
 logging.basicConfig(level=logging.ERROR)
 
@@ -314,7 +402,7 @@ def style_ltp_by_change(data):
 def render_top5_impact_chart(chart_df, symbols):
     width, height = 1000, 360
     left, right, top, bottom = 78, 976, 38, 286
-    palette = ("#16a34a", "#2563eb", "#f97316", "#a855f7", "#0891b2")
+    palette = ("#0f766e", "#2563eb", "#ea580c", "#9333ea", "#0891b2")
     values = [
         float(value)
         for symbol in symbols
@@ -332,25 +420,29 @@ def render_top5_impact_chart(chart_df, symbols):
     parts = [
         f'<svg viewBox="0 0 {width} {height}" role="img" '
         'aria-label="Live five-minute estimated index impact for the top five NIFTY stocks" '
-        'style="width:100%;height:auto;font-family:Arial,sans-serif">'
+        'style="display:block;width:100%;height:auto;font-family:Arial,sans-serif">'
     ]
+    parts.append(
+        f'<rect x="0" y="0" width="{width}" height="{height}" rx="14" '
+        'fill="#ffffff"/>'
+    )
     for tick in (-scale, -scale / 2, 0, scale / 2, scale):
         y = y_position(tick)
-        stroke = "#64748b" if tick == 0 else "#e2e8f0"
-        stroke_width = "2" if tick == 0 else "1"
+        stroke = "#94a3b8" if tick == 0 else "#edf1f6"
+        stroke_width = "1.5" if tick == 0 else "1"
         parts.append(
             f'<line x1="{left}" y1="{y:.1f}" x2="{right}" y2="{y:.1f}" '
             f'stroke="{stroke}" stroke-width="{stroke_width}"/>'
         )
         parts.append(
             f'<text x="{left - 10}" y="{y + 4:.1f}" text-anchor="end" '
-            'font-size="12" fill="#475569">'
+            'font-size="11" fill="#64748b">'
             f'{tick:+.3f}</text>'
         )
     parts.append(
         f'<text x="18" y="{(top + bottom) / 2:.1f}" transform="rotate(-90 18 '
-        f'{(top + bottom) / 2:.1f})" text-anchor="middle" font-size="12" '
-        'fill="#475569">Estimated impact (pp)</text>'
+        f'{(top + bottom) / 2:.1f})" text-anchor="middle" font-size="11" '
+        'font-weight="600" fill="#475569">Estimated impact (pp)</text>'
     )
 
     for series_index, symbol in enumerate(symbols):
@@ -363,24 +455,41 @@ def render_top5_impact_chart(chart_df, symbols):
         if points:
             color = palette[series_index % len(palette)]
             parts.append(
-                f'<polyline fill="none" stroke="{color}" stroke-width="2.5" '
-                f'stroke-linejoin="round" stroke-linecap="round" '
+                f'<polyline fill="none" stroke="{color}" stroke-width="2.7" '
+                f'stroke-linejoin="round" stroke-linecap="round" opacity="0.92" '
                 f'points="{" ".join(points)}"/>'
             )
+            last_point = next(
+                (
+                    (index, float(value))
+                    for index, value in reversed(list(enumerate(series)))
+                    if pd.notna(value)
+                ),
+                None,
+            )
+            if last_point is not None:
+                marker_index, last_value = last_point
+                marker_x = x_position(marker_index, samples)
+                marker_y = y_position(last_value)
+                parts.append(
+                    f'<circle cx="{marker_x:.1f}" cy="{marker_y:.1f}" r="4.5" '
+                    f'fill="#ffffff" stroke="{color}" stroke-width="2.5"/>'
+                )
             legend_x = left + series_index * 175
             parts.append(
-                f'<line x1="{legend_x}" y1="328" x2="{legend_x + 22}" y2="328" '
-                f'stroke="{color}" stroke-width="3"/>'
-                f'<text x="{legend_x + 28}" y="332" font-size="12" fill="#334155">'
+                f'<line x1="{legend_x}" y1="330" x2="{legend_x + 18}" y2="330" '
+                f'stroke="{color}" stroke-width="3" stroke-linecap="round"/>'
+                f'<text x="{legend_x + 25}" y="334" font-size="11" '
+                'font-weight="600" fill="#334155">'
                 f'{escape(symbol)}</text>'
             )
 
     if samples:
         parts.append(
-            f'<text x="{left}" y="309" font-size="11" fill="#64748b">'
+            f'<text x="{left}" y="307" font-size="10" fill="#94a3b8">'
             f'{chart_df.index[0].strftime("%H:%M:%S")}</text>'
-            f'<text x="{right}" y="309" text-anchor="end" font-size="11" '
-            f'fill="#64748b">{chart_df.index[-1].strftime("%H:%M:%S")}</text>'
+            f'<text x="{right}" y="307" text-anchor="end" font-size="10" '
+            f'fill="#94a3b8">{chart_df.index[-1].strftime("%H:%M:%S")}</text>'
         )
     parts.append("</svg>")
     return "".join(parts)

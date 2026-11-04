@@ -12,8 +12,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = Path(__file__).resolve().parent
 SCRIP_MASTER_CACHE = PROJECT_ROOT / "scrip_master.csv"
 
-target_strike = 22400
-target_expiry = pd.to_datetime("2026-10-19")
+target_strike = 23800
+target_expiry = pd.to_datetime("2026-11-09")
 underlying = "NIFTY"
 option_types = ("CE", "PE")
 itm_strike_step = 100
@@ -80,6 +80,12 @@ def load_scrip_master(refresh):
         print(f"Using cached scrip master: {SCRIP_MASTER_CACHE}")
         return scrips
     return fetch_scrip_master()
+
+
+def remove_stale_reports(current_output):
+    for stale_report in SCRIPT_DIR.glob("option_scripcodes_*.html"):
+        if stale_report != current_output:
+            stale_report.unlink(missing_ok=True)
 
 
 def main():
@@ -159,6 +165,7 @@ def main():
     output_file = SCRIPT_DIR / (
         f"option_scripcodes_{underlying}_{target_strike}_{expiry.isoformat()}.html"
     )
+    remove_stale_reports(output_file)
     headers = "".join(f"<th scope=\"col\">{column}</th>" for column in display_result.columns)
     report = f"""<!doctype html>
 <html lang="en">
