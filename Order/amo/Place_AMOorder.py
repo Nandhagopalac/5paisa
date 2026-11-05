@@ -1,20 +1,20 @@
 r"""
 Quick PowerShell shortcut:
-    .\Order\amo.ps1
+    .\Order\amo\amo.ps1
 Choose a contract from the latest HTML report with the arrow keys, press Enter,
 then type Y after reviewing the order to submit it. Defaults can be overridden:
-    .\Order\amo.ps1 -Quantity 1 -Price 445 -Side B
+    .\Order\amo\amo.ps1 -Quantity 1 -Price 445 -Side B
 
 Direct Python invocation:
-    & .\.venv_5paisa\Scripts\python.exe .\Order\Place_AMOorder.py --scripcode 47133 --qty 65 --price 7.5 --side B --exchtype D --confirm
+    & .\.venv_5paisa\Scripts\python.exe .\Order\amo\Place_AMOorder.py --scripcode 47133 --qty 65 --price 7.5 --side B --exchtype D --confirm
 Place an After-Market Order (AMO) on 5paisa via the Xstream REST API.
 
 Docs: https://xstream.5paisa.com/dev-docs/order-management-system/place-order
   POST https://Openapi.5paisa.com/VendorsAPI/Service1.svc/V1/PlaceOrderRequest
   Authorization: bearer <access token>,  body: {"head": {"key": <app key>}, "body": {...}}
 
-Credentials are read from config.ini (section [5paise_login]) next to this
-script, or from the file named in the FP_CONFIG environment variable.
+Credentials are read from config.ini (section [5paise_login]) in the project
+root, or from the file named in the FP_CONFIG environment variable.
 Needed keys: APP_NAME, APP_SOURCE, USER_ID, PASSWORD, USER_KEY, ENCRYPTION_KEY.
 Optional: access_token (re-used while still valid; refreshed + saved when expired).
 
@@ -26,8 +26,8 @@ asks you to log in once:
     3. Paste it here within ~30 seconds.
 
 Direct Python usage (DRY RUN by default, nothing is sent):
-    & .\.venv_5paisa\Scripts\python.exe .\Order\Place_AMOorder.py --scripcode 1660 --qty 1 --price 445 --side B
-    & .\.venv_5paisa\Scripts\python.exe .\Order\Place_AMOorder.py --scripdata ITC_EQ --qty 1 --price 445 --side B
+    & .\.venv_5paisa\Scripts\python.exe .\Order\amo\Place_AMOorder.py --scripcode 1660 --qty 1 --price 445 --side B
+    & .\.venv_5paisa\Scripts\python.exe .\Order\amo\Place_AMOorder.py --scripdata ITC_EQ --qty 1 --price 445 --side B
 Place it for real by adding --confirm.
 
 If 5paisa rejects the order, try  --minimal  : it sends exactly the body shown in
@@ -41,11 +41,13 @@ import os
 import re
 import sys
 import time
+from pathlib import Path
 
 import requests
 
 URL = "https://Openapi.5paisa.com/VendorsAPI/Service1.svc/V1/PlaceOrderRequest"
-CONFIG = os.environ.get("FP_CONFIG", "config.ini")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CONFIG = Path(os.environ.get("FP_CONFIG", PROJECT_ROOT / "config.ini"))
 
 
 def token_valid(tok):
@@ -61,11 +63,11 @@ def token_valid(tok):
 
 def save_token(tok):
     """Replace only the access_token line in config.ini, leaving the rest as is."""
-    text = open(CONFIG).read()
+    text = CONFIG.read_text(encoding="utf-8")
     new, n = re.subn(r"(?m)^access_token\s*=.*$", lambda m: f"access_token = {tok}", text)
     if n == 0:
         new = re.sub(r"(?m)^(\[5paise_login\]\s*)$", lambda m: m.group(1) + f"\naccess_token = {tok}", text, count=1)
-    open(CONFIG, "w").write(new)
+    CONFIG.write_text(new, encoding="utf-8")
 
 
 p = argparse.ArgumentParser()
@@ -113,7 +115,7 @@ if not a.confirm:
 
 cfg = configparser.ConfigParser(interpolation=None)  # passwords may contain '%'
 if not cfg.read(CONFIG):
-    sys.exit(f"Cannot find {CONFIG}. Run from the folder that contains it, or set FP_CONFIG.")
+    sys.exit(f"Cannot find {CONFIG}. Set FP_CONFIG to its path if needed.")
 s = cfg["5paise_login"]
 app_key = s["USER_KEY"].strip()
 token = s.get("access_token", "").strip()

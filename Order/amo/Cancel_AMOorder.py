@@ -1,7 +1,7 @@
 """Select and cancel a pending 5paisa after-market order from the order book.
 
-Run from the project root:
-    & .\\.venv_5paisa\\Scripts\\python.exe .\\Order\\Cancel_AMOorder.py
+Run from the project root (or any working directory):
+    & .\\.venv_5paisa\\Scripts\\python.exe .\\Order\\amo\\Cancel_AMOorder.py
 Use Up/Down and Enter to cancel; Esc exits without cancelling.
 """
 import argparse
@@ -18,7 +18,7 @@ from pathlib import Path
 import msvcrt
 from py5paisa import FivePaisaClient
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = Path(os.environ.get("FP_CONFIG", PROJECT_ROOT / "config.ini"))
 TERMINAL_STATUS_WORDS = (
     "cancel",

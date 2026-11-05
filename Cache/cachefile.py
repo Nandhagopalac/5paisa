@@ -12,11 +12,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = Path(__file__).resolve().parent
 SCRIP_MASTER_CACHE = PROJECT_ROOT / "scrip_master.csv"
 
-target_strike = 23800
+target_strike = 24600
 target_expiry = pd.to_datetime("2026-11-09")
 underlying = "NIFTY"
 option_types = ("CE", "PE")
-itm_strike_step = 100
+itm_strike_step = 200
 itm_strikes_per_side = 3
 
 REQUIRED_COLUMNS = {
@@ -90,7 +90,10 @@ def remove_stale_reports(current_output):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Save the target NIFTY strike and its nearest lower/higher CE and PE scrips."
+        description=(
+            "Save the target NIFTY strike with three CE strikes below and three PE "
+            "strikes above, spaced 200 points apart."
+        )
     )
     parser.add_argument(
         "--refresh-cache",

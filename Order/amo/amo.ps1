@@ -11,7 +11,7 @@ param(
     [switch] $Intraday
 )
 
-$projectRoot = Split-Path -Parent $PSScriptRoot
+$projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $python = Join-Path $projectRoot ".venv_5paisa\Scripts\python.exe"
 $orderScript = Join-Path $PSScriptRoot "Place_AMOorder.py"
 $reportDirectory = Join-Path $projectRoot "Cache"

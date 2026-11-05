@@ -1,13 +1,12 @@
-"""Place a regular 5paisa limit order through the Xstream REST API.
+"""Place a regular 5paisa market order through the Xstream REST API.
 
 Run from the project root (dry run by default):
-    & .\\.venv_5paisa\\Scripts\\python.exe .\\Order\\Place_limitorder.py --scripcode 47133 --qty 65 --price 7.5 --side B
-    .\\Order\\limit.ps1 -Quantity 1 -Price 445 -Side B
+    & .\\.venv_5paisa\\Scripts\\python.exe .\\Order\\Place_marketorder.py --scripcode 47133 --qty 65 --side B
+    .\\Order\\market\\market.ps1 -Quantity 1 -Side B
 
-Add --confirm to submit. Credentials are read from config.ini next to the
-project root, or from the file named by FP_CONFIG. If login is required, open
-the 5paisa developer login URL using USER_KEY from config.ini, then paste the
-request token here.
+Add --confirm to submit. Market orders can execute immediately at a price
+different from the last traded price. Credentials are read from config.ini
+next to the project root, or from the file named by FP_CONFIG.
 """
 import argparse
 import base64
@@ -18,13 +17,12 @@ import os
 import re
 import sys
 import time
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import requests
 
 URL = "https://Openapi.5paisa.com/VendorsAPI/Service1.svc/V1/PlaceOrderRequest"
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = Path(os.environ.get("FP_CONFIG", PROJECT_ROOT / "config.ini"))
 
 
@@ -36,16 +34,6 @@ def positive_int(value):
     if number <= 0:
         raise argparse.ArgumentTypeError("must be a positive integer")
     return number
-
-
-def positive_price(value):
-    try:
-        price = Decimal(value)
-    except InvalidOperation as error:
-        raise argparse.ArgumentTypeError("must be a positive decimal price") from error
-    if not price.is_finite() or price <= 0:
-        raise argparse.ArgumentTypeError("must be a positive decimal price")
-    return price
 
 
 def nonempty_symbol(value):
@@ -124,13 +112,12 @@ def get_access_token(settings):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Place a regular 5paisa limit order (dry run unless --confirm is used)."
+        description="Place a regular 5paisa market order (dry run unless --confirm is used)."
     )
     script = parser.add_mutually_exclusive_group(required=True)
     script.add_argument("--scripcode", type=positive_int, help="numeric scrip code, e.g. 1660 (ITC)")
     script.add_argument("--scripdata", type=nonempty_symbol, help="symbol such as ITC_EQ")
     parser.add_argument("--qty", type=positive_int, required=True)
-    parser.add_argument("--price", type=positive_price, required=True, help="positive limit price")
     parser.add_argument("--side", choices=("B", "S"), required=True, help="B=buy, S=sell")
     parser.add_argument("--exch", default="N", help="N=NSE, B=BSE, M=MCX")
     parser.add_argument("--exchtype", default="C", help="C=cash, D=derivatives, U=currency")
@@ -144,12 +131,11 @@ def main():
     parser.add_argument("--confirm", action="store_true", help="really send the order")
     args = parser.parse_args()
 
-    price = format(args.price.normalize(), "f")
     body = {
         "Exchange": args.exch,
         "ExchangeType": args.exchtype,
         "ScripCode": str(args.scripcode) if args.scripcode else "0",
-        "Price": price,
+        "Price": "0",
         "StopLossPrice": "0",
         "OrderType": "Buy" if args.side == "B" else "Sell",
         "Qty": args.qty,
@@ -162,10 +148,11 @@ def main():
     if args.scripdata:
         body["ScripData"] = args.scripdata
     if not args.minimal:
-        body["RemoteOrderID"] = f"limit{int(time.time())}"
+        body["RemoteOrderID"] = f"market{int(time.time())}"
         body["AlgoID"] = args.algoid
 
-    print("Regular limit order to place:\n", json.dumps(body, indent=2))
+    print("Regular market order to place:\n", json.dumps(body, indent=2))
+    print("Market orders may execute immediately at a price different from the last traded price.")
     if not args.confirm:
         print("\nDRY RUN - nothing sent. Add --confirm to place it.")
         return 0
@@ -207,7 +194,7 @@ def main():
         raise RuntimeError("5paisa returned an unexpected response format.")
     if head.get("status") == "0" and order_result.get("Status") == 0:
         print(
-            "\nLimit order accepted. "
+            "\nMarket order accepted. "
             f"BrokerOrderID={order_result.get('BrokerOrderID')} "
             f"RemoteOrderID={order_result.get('RemoteOrderID')}"
         )
@@ -222,9 +209,17 @@ def main():
     elif message == "Invalid Session":
         print("Hint: log in again with the correct account.")
     elif message == "Invalid Input Parameters.":
-        print("Hint: check the scrip code, quantity, price, and request fields.")
+        print("Hint: check the scrip code, quantity, and request fields.")
+    elif "algo limit order" in str(message).lower():
+        print(
+            "Hint: 5paisa's RMS rejected this market order and says an algo limit "
+            "order is required. This script cannot safely convert a market order "
+            "into a limit order; check with 5paisa API support whether your account "
+            "and derivatives segment support market orders or require an approved "
+            "algo order."
+        )
     elif order_result.get("Status") == 1:
-        print("Hint: check funds/margin, price band, and market trading hours.")
+        print("Hint: 5paisa RMS rejected the order; check the message above with 5paisa.")
     return 1
 
 
