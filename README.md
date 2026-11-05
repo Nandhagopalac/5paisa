@@ -12,6 +12,10 @@ Cancel all pending AMO orders (no per-order confirmation) with:
 .\Order\amo\amo_cancel.ps1
 ```
 
+Place an AMO from the option selector with `.\Order\amo\amo.ps1`. It fetches
+the selected contract's LTP, then prompts for the limit and stop-loss trigger
+prices before submitting.
+
 PowerShell shortcuts can be run from the project root or another working
 directory, for example:
 

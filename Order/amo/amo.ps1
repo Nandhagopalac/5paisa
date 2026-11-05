@@ -2,14 +2,28 @@ param(
     [ValidateRange(1, [int]::MaxValue)]
     [int] $Quantity = 65,
 
-    [ValidateRange(0, [double]::MaxValue)]
-    [double] $Price = 12.5,
-
     [ValidateSet("B", "S")]
     [string] $Side = "B",
 
     [switch] $Intraday
 )
+
+function Read-PositivePrice([string] $Prompt) {
+    while ($true) {
+        $inputPrice = Read-Host $Prompt
+        $parsedPrice = [decimal]::Zero
+        $validPrice = [decimal]::TryParse(
+            $inputPrice,
+            [Globalization.NumberStyles]::AllowDecimalPoint,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [ref] $parsedPrice
+        )
+        if ($validPrice -and $parsedPrice -gt 0) {
+            return $parsedPrice.ToString("0.################", [cultureinfo]::InvariantCulture)
+        }
+        Write-Host "Enter a positive price using a decimal point (for example, 92.5)." -ForegroundColor Red
+    }
+}
 
 $projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $python = Join-Path $projectRoot ".venv_5paisa\Scripts\python.exe"
@@ -123,24 +137,79 @@ while (-not $selected) {
 }
 
 $contract = $contracts[$selectedIndex]
-$priceText = $Price.ToString("0.################", [cultureinfo]::InvariantCulture)
+$expiryDate = [datetime]::MinValue
+if (-not [datetime]::TryParseExact(
+    $contract.Expiry,
+    "yyyy-MM-dd",
+    [Globalization.CultureInfo]::InvariantCulture,
+    [Globalization.DateTimeStyles]::None,
+    [ref] $expiryDate
+)) {
+    Write-Error "Invalid expiry in $($report.Name): $($contract.Expiry)"
+    exit 1
+}
+$symbolDate = $expiryDate.ToString("dd MMM yyyy", [Globalization.CultureInfo]::InvariantCulture).ToUpperInvariant()
+$symbolStrike = ([decimal]::Parse($contract.StrikePrice, [Globalization.CultureInfo]::InvariantCulture)).ToString(
+    "0.00",
+    [Globalization.CultureInfo]::InvariantCulture
+)
+$marketFeedSymbol = "NIFTY $symbolDate $($contract.OptionType) $symbolStrike"
+$marketFeedExpiry = $expiryDate.ToString("yyyyMMdd", [Globalization.CultureInfo]::InvariantCulture)
+$marketFeedStrike = ([decimal]::Parse($contract.StrikePrice, [Globalization.CultureInfo]::InvariantCulture)).ToString(
+    "0.##",
+    [Globalization.CultureInfo]::InvariantCulture
+)
+$previousConfig = $env:FP_CONFIG
+try {
+    $env:FP_CONFIG = Join-Path $projectRoot "config.ini"
+    $quoteOutput = & $python $orderScript `
+        --ltp-only `
+        --scripcode $contract.ScripCode `
+        --exch $contract.Exchange `
+        --exchtype $contract.ExchangeType `
+        --symbol $marketFeedSymbol `
+        --expiry $marketFeedExpiry `
+        --strike $marketFeedStrike `
+        --option-type $contract.OptionType
+    $quoteExitCode = $LASTEXITCODE
+}
+finally {
+    $env:FP_CONFIG = $previousConfig
+}
+if ($quoteExitCode -ne 0) {
+    Write-Error "Could not retrieve LTP for ScripCode $($contract.ScripCode). No order was sent."
+    exit $quoteExitCode
+}
+
+$quoteText = ($quoteOutput -join "`n")
+$ltpMatch = [regex]::Match($quoteText, "(?m)^LTP=([0-9]+(?:\.[0-9]+)?)\s*$")
+if (-not $ltpMatch.Success) {
+    Write-Error "The quote response did not contain a usable LTP. No order was sent."
+    exit 1
+}
+$ltpText = $ltpMatch.Groups[1].Value
 $orderSide = "Buy"
 if ($Side -eq "S") {
     $orderSide = "Sell"
 }
 
 Write-Host ""
-Write-Host "Submitting selected AMO:" -ForegroundColor Cyan
+Write-Host "Selected AMO contract:" -ForegroundColor Cyan
 Write-Host ("  {0} {1} {2} | ScripCode {3}" -f `
     $contract.OptionType, $contract.StrikePrice, $contract.Expiry, $contract.ScripCode)
-Write-Host ("  {0} {1} | Qty {2} | Price {3} | Exchange {4}/{5}" -f `
-    $orderSide, $contract.OptionType, $Quantity, $priceText, $contract.Exchange, $contract.ExchangeType)
+Write-Host ("  LTP: {0}" -f $ltpText) -ForegroundColor Yellow
+Write-Host ("  {0} {1} | Qty {2} | Exchange {3}/{4}" -f `
+    $orderSide, $contract.OptionType, $Quantity, $contract.Exchange, $contract.ExchangeType)
+$priceText = Read-PositivePrice "Enter limit price"
+$triggerText = Read-PositivePrice "Enter stop-loss trigger price"
+Write-Host ("  Limit {0} | Trigger {1}" -f $priceText, $triggerText)
 
 $pythonArgs = @(
     $orderScript,
     "--scripcode", $contract.ScripCode,
     "--qty", $Quantity,
     "--price", $priceText,
+    "--trigger-price", $triggerText,
     "--side", $Side,
     "--exch", $contract.Exchange,
     "--exchtype", $contract.ExchangeType,

@@ -1,46 +1,22 @@
-r"""
-Quick PowerShell shortcut:
-    .\Order\amo\amo.ps1
-Choose a contract from the latest HTML report with the arrow keys, press Enter,
-then type Y after reviewing the order to submit it. Defaults can be overridden:
-    .\Order\amo\amo.ps1 -Quantity 1 -Price 445 -Side B
+"""Place a 5paisa after-market stop-loss limit order through the Xstream REST API.
 
-Direct Python invocation:
-    & .\.venv_5paisa\Scripts\python.exe .\Order\amo\Place_AMOorder.py --scripcode 47133 --qty 65 --price 7.5 --side B --exchtype D --confirm
-Place an After-Market Order (AMO) on 5paisa via the Xstream REST API.
+The PowerShell shortcut displays the selected contract's LTP and asks for a
+limit price and stop-loss trigger before submitting the AMO.
 
-Docs: https://xstream.5paisa.com/dev-docs/order-management-system/place-order
-  POST https://Openapi.5paisa.com/VendorsAPI/Service1.svc/V1/PlaceOrderRequest
-  Authorization: bearer <access token>,  body: {"head": {"key": <app key>}, "body": {...}}
-
-Credentials are read from config.ini (section [5paise_login]) in the project
-root, or from the file named in the FP_CONFIG environment variable.
-Needed keys: APP_NAME, APP_SOURCE, USER_ID, PASSWORD, USER_KEY, ENCRYPTION_KEY.
-Optional: access_token (re-used while still valid; refreshed + saved when expired).
-
-Access tokens last only ~1 hour. When the stored token has expired the script
-asks you to log in once:
-    1. Open in your browser and log in to 5paisa:
-       https://dev-openapi.5paisa.com/WebVendorLogin/VLogin/Index?VendorKey=<USER_KEY>&ResponseURL=https://www.5paisa.com/technology/developer-apis
-    2. Copy the request token from the URL you land on.
-    3. Paste it here within ~30 seconds.
-
-Direct Python usage (DRY RUN by default, nothing is sent):
-    & .\.venv_5paisa\Scripts\python.exe .\Order\amo\Place_AMOorder.py --scripcode 1660 --qty 1 --price 445 --side B
-    & .\.venv_5paisa\Scripts\python.exe .\Order\amo\Place_AMOorder.py --scripdata ITC_EQ --qty 1 --price 445 --side B
-Place it for real by adding --confirm.
-
-If 5paisa rejects the order, try  --minimal  : it sends exactly the body shown in
-the docs' sample request (no RemoteOrderID / AlgoID), only AHPlaced is "Y".
+Direct Python usage (dry run by default):
+    & .\\.venv_5paisa\\Scripts\\python.exe .\\Order\\amo\\Place_AMOorder.py --scripcode 39964 --qty 65 --price 120 --trigger-price 115 --side B --exchtype D
+Add --confirm to submit the order.
 """
 import argparse
 import base64
+import binascii
 import configparser
 import json
 import os
 import re
 import sys
 import time
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import requests
@@ -50,123 +26,328 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = Path(os.environ.get("FP_CONFIG", PROJECT_ROOT / "config.ini"))
 
 
-def token_valid(tok):
-    """True if the JWT is present and not within 60s of expiring."""
+def positive_int(value):
     try:
-        payload = tok.split(".")[1]
+        number = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a positive integer") from error
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
+
+
+def positive_price(value):
+    try:
+        price = Decimal(value)
+    except InvalidOperation as error:
+        raise argparse.ArgumentTypeError("must be a positive decimal price") from error
+    if not price.is_finite() or price <= 0:
+        raise argparse.ArgumentTypeError("must be a positive decimal price")
+    return price
+
+
+def token_valid(token):
+    try:
+        payload = token.split(".")[1]
         payload += "=" * (-len(payload) % 4)
-        exp = json.loads(base64.urlsafe_b64decode(payload))["exp"]
-        return exp > time.time() + 60
-    except Exception:
+        expiry = json.loads(base64.urlsafe_b64decode(payload))["exp"]
+        return expiry > time.time() + 60
+    except (
+        AttributeError,
+        binascii.Error,
+        IndexError,
+        KeyError,
+        ValueError,
+        TypeError,
+        json.JSONDecodeError,
+    ):
         return False
 
 
-def save_token(tok):
-    """Replace only the access_token line in config.ini, leaving the rest as is."""
+def save_token(token):
     text = CONFIG.read_text(encoding="utf-8")
-    new, n = re.subn(r"(?m)^access_token\s*=.*$", lambda m: f"access_token = {tok}", text)
-    if n == 0:
-        new = re.sub(r"(?m)^(\[5paise_login\]\s*)$", lambda m: m.group(1) + f"\naccess_token = {tok}", text, count=1)
-    CONFIG.write_text(new, encoding="utf-8")
+    updated, count = re.subn(
+        r"(?m)^access_token\s*=.*$",
+        lambda _: f"access_token = {token}",
+        text,
+    )
+    if count == 0:
+        updated, count = re.subn(
+            r"(?m)^(\[5paise_login\]\s*)$",
+            lambda match: match.group(1) + f"\naccess_token = {token}",
+            text,
+            count=1,
+        )
+    if count == 0:
+        raise ValueError(f"Could not save access token: [5paise_login] section not found in {CONFIG}.")
+    CONFIG.write_text(updated, encoding="utf-8")
 
 
-p = argparse.ArgumentParser()
-p.add_argument("--scripcode", type=int, help="numeric scrip code, e.g. 1660 (ITC)")
-p.add_argument("--scripdata", help="symbol such as ITC_EQ (used instead of --scripcode)")
-p.add_argument("--qty", type=int, required=True)
-p.add_argument("--price", type=float, required=True, help="limit price; 0 = market")
-p.add_argument("--side", choices=["B", "S"], required=True, help="B=buy, S=sell")
-p.add_argument("--exch", default="N", help="N=NSE, B=BSE, M=MCX")
-p.add_argument("--exchtype", default="C", help="C=cash, D=derivatives, U=currency")
-p.add_argument("--intraday", action="store_true", help="default is delivery")
-p.add_argument("--algoid", default="0", help="Algo ID if you are a registered algo user")
-p.add_argument("--minimal", action="store_true",
-               help="send exactly the docs' sample body (no RemoteOrderID/AlgoID)")
-p.add_argument("--confirm", action="store_true", help="really send the order")
-a = p.parse_args()
-if not a.scripcode and not a.scripdata:
-    p.error("give --scripcode or --scripdata")
+def load_settings():
+    config = configparser.ConfigParser(interpolation=None)
+    if not config.read(CONFIG):
+        raise FileNotFoundError(f"Cannot find {CONFIG}. Set FP_CONFIG to its path if needed.")
+    if not config.has_section("5paise_login"):
+        raise configparser.NoSectionError("5paise_login")
+    return config["5paise_login"]
 
-# Built from the docs' sample request body.
-body = {
-    "Exchange": a.exch,
-    "ExchangeType": a.exchtype,
-    "ScripCode": str(a.scripcode) if a.scripcode else "0",
-    "Price": f"{a.price:g}",  # "445", not "445.0", like the docs' sample
-    "StopLossPrice": "0",
-    "OrderType": "Buy" if a.side == "B" else "Sell",
-    "Qty": a.qty,
-    "DisQty": "0",
-    "IsIntraday": a.intraday,
-    "isMTF": False,
-    "iOrderValidity": "0",
-    "AHPlaced": "Y",  # Y = after-market order (the docs' sample has "N")
-}
-if a.scripdata:
-    body["ScripData"] = a.scripdata
-if not a.minimal:
-    body["RemoteOrderID"] = f"amo{int(time.time())}"  # docs list it as mandatory
-    body["AlgoID"] = a.algoid  # docs: non-algo users pass 0 or null
 
-print("Order to place:\n", json.dumps(body, indent=2))
-if not a.confirm:
-    print("\nDRY RUN - nothing sent. Add --confirm to place it.")
-    sys.exit(0)
-
-cfg = configparser.ConfigParser(interpolation=None)  # passwords may contain '%'
-if not cfg.read(CONFIG):
-    sys.exit(f"Cannot find {CONFIG}. Set FP_CONFIG to its path if needed.")
-s = cfg["5paise_login"]
-app_key = s["USER_KEY"].strip()
-token = s.get("access_token", "").strip()
-
-if token_valid(token):
-    print("Using saved access token (still valid).")
-else:
+def authenticated_client(settings, *, quiet=False):
     from py5paisa import FivePaisaClient
 
-    print("Access token missing or expired -> OAuth login needed (see top of this file).")
-    cred = {k: s[k].strip() for k in
-            ("APP_NAME", "APP_SOURCE", "USER_ID", "PASSWORD", "USER_KEY", "ENCRYPTION_KEY")}
-    client = FivePaisaClient(cred=cred)
-    client.get_oauth_session(input("Paste request token: ").strip())
-    token = client.get_access_token()
-    if not token_valid(token):
-        sys.exit("Login did not return a valid access token. Re-do the login and paste the token faster.")
-    save_token(token)
-    print(f"New access token saved to {CONFIG}.")
+    credentials = {
+        key: settings[key].strip()
+        for key in ("APP_NAME", "APP_SOURCE", "USER_ID", "PASSWORD", "USER_KEY", "ENCRYPTION_KEY")
+    }
+    client = FivePaisaClient(cred=credentials)
+    token = settings.get("access_token", "").strip()
+    output = sys.stderr if quiet else sys.stdout
+    if token_valid(token):
+        if not quiet:
+            print("Using saved access token (still valid).")
+    else:
+        print("Access token missing or expired; OAuth login is needed.", file=output)
+        client.get_oauth_session(input("Paste request token: ").strip())
+        token = client.get_access_token()
+        if not token or not token_valid(token):
+            raise RuntimeError("Login did not return a valid access token.")
+        save_token(token)
+        print(f"New access token saved to {CONFIG}.", file=output)
 
-resp = requests.post(
-    URL,
-    headers={"Content-Type": "application/json", "Authorization": f"bearer {token}"},
-    json={"head": {"key": app_key}, "body": body},
-    timeout=20,
-)
-print("\nHTTP", resp.status_code)
-try:
-    out = resp.json()
-    print(json.dumps(out, indent=2))
-except ValueError:
-    print(resp.text)
-    sys.exit(1)
+    client.set_access_token(token, settings["CLIENT_CODE"].strip())
+    return client, token
 
-head = out.get("head") or {}
-b = out.get("body") or {}
-if head.get("status") == "0" and b.get("Status") == 0:
-    print(f"\nAMO accepted. BrokerOrderID={b.get('BrokerOrderID')} RemoteOrderID={b.get('RemoteOrderID')}")
-    sys.exit(0)
 
-msg = b.get("Message") or head.get("statusDescription")
-print(f"\nNOT placed: {msg}")
-hints = {
-    "Authentication Fails": "access token is expired/invalid -> delete access_token from config.ini and log in again.",
-    "Invalid Session": "token does not belong to this user/client code -> log in again with the right account.",
-    "Invalid Input Parameters.": "a field is wrong/missing -> check scrip code, qty, price; try --minimal.",
-}
-if head.get("status") == "2" or "Invalid Head" in str(msg):
-    print("Hint: USER_KEY (app key) in the request head is wrong.")
-elif msg in hints:
-    print("Hint:", hints[msg])
-elif b.get("Status") == 1 or b.get("RMSResponseCode") == 0 and b.get("Status") == 0:
-    print("Hint: 5paisa's risk system (RMS) rejected it - check funds/margin, price band, and AMO timing.")
-sys.exit(1)
+def quote_ltp(response, scripcode):
+    if not isinstance(response, (dict, list)):
+        raise RuntimeError("5paisa returned an unexpected market-feed response.")
+
+    quotes = []
+    ltp_keys = ("LastRate", "LTP", "LastTradedPrice", "LastTradedRate")
+    token_keys = ("ScripCode", "Token", "token", "ExchScripCode", "InstrumentToken")
+
+    def visit(value):
+        if isinstance(value, dict):
+            rate = next((value[key] for key in ltp_keys if value.get(key) is not None), None)
+            if rate is not None:
+                token = next((value[key] for key in token_keys if value.get(key) is not None), None)
+                quotes.append((token, rate))
+            for nested in value.values():
+                visit(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                visit(nested)
+
+    visit(response)
+    exact_matches = [
+        rate for token, rate in quotes
+        if token is not None and str(token).strip() == str(scripcode)
+    ]
+    if len(exact_matches) == 1:
+        selected_rate = exact_matches[0]
+    elif len(exact_matches) > 1:
+        raise RuntimeError(
+            f"5paisa returned multiple LTP values for scrip code {scripcode}; "
+            "refusing to choose one."
+        )
+    elif len(quotes) == 1:
+        selected_rate = quotes[0][1]
+    else:
+        if not quotes:
+            response_fields = sorted(response.keys()) if isinstance(response, dict) else []
+            body = response.get("body", response) if isinstance(response, dict) else response
+            message = ""
+            if isinstance(body, dict):
+                message = str(body.get("Message") or body.get("Error") or "")
+            details = f" Response fields: {response_fields}."
+            if message:
+                details += f" 5paisa message: {message}."
+        else:
+            details = (
+                f" Found {len(quotes)} quote records but none matched "
+                f"scrip code {scripcode}."
+            )
+        raise RuntimeError(f"Could not identify one LTP for scrip code {scripcode}.{details}")
+
+    try:
+        ltp = Decimal(str(selected_rate))
+    except InvalidOperation as error:
+        raise RuntimeError("5paisa returned an invalid LTP.") from error
+    if not ltp.is_finite() or ltp <= 0:
+        raise RuntimeError(f"5paisa returned no usable LTP for scrip code {scripcode}.")
+    return ltp
+
+
+def fetch_ltp(client, scripcode, exchange, exchange_type, symbol, expiry, strike, option_type):
+    response = client.fetch_market_feed(
+        [
+            {
+                "Exch": exchange,
+                "ExchType": exchange_type,
+                "Symbol": symbol,
+                "Expiry": expiry,
+                "StrikePrice": strike,
+                "OptionType": option_type,
+            }
+        ]
+    )
+    return quote_ltp(response, scripcode)
+
+
+def build_body(args):
+    body = {
+        "Exchange": args.exch,
+        "ExchangeType": args.exchtype,
+        "ScripCode": str(args.scripcode) if args.scripcode is not None else "0",
+        "Price": format(args.price.normalize(), "f"),
+        "StopLossPrice": (
+            format(args.trigger_price.normalize(), "f")
+            if args.trigger_price is not None
+            else "0"
+        ),
+        "IsStopLossOrder": args.trigger_price is not None,
+        "OrderType": "Buy" if args.side == "B" else "Sell",
+        "Qty": args.qty,
+        "DisQty": "0",
+        "IsIntraday": args.intraday,
+        "isMTF": False,
+        "iOrderValidity": "0",
+        "AHPlaced": "Y",
+    }
+    if args.scripdata:
+        body["ScripData"] = args.scripdata.strip()
+    if not args.minimal:
+        body["RemoteOrderID"] = f"amo{int(time.time())}"
+        body["AlgoID"] = args.algoid
+    return body
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        description="Place a 5paisa AMO stop-loss limit order (dry run unless --confirm is used)."
+    )
+    script = parser.add_mutually_exclusive_group(required=True)
+    script.add_argument("--scripcode", type=positive_int, help="numeric scrip code, e.g. 1660 (ITC)")
+    script.add_argument("--scripdata", help="symbol such as ITC_EQ")
+    parser.add_argument("--qty", type=positive_int, help="positive order quantity")
+    parser.add_argument("--price", type=positive_price, help="positive limit price")
+    parser.add_argument("--trigger-price", type=positive_price, help="positive stop-loss trigger price")
+    parser.add_argument("--side", choices=["B", "S"], help="B=buy, S=sell")
+    parser.add_argument("--exch", default="N", help="N=NSE, B=BSE, M=MCX")
+    parser.add_argument("--exchtype", default="C", help="C=cash, D=derivatives, U=currency")
+    parser.add_argument("--symbol", help=argparse.SUPPRESS)
+    parser.add_argument("--expiry", help=argparse.SUPPRESS)
+    parser.add_argument("--strike", help=argparse.SUPPRESS)
+    parser.add_argument("--option-type", choices=["CE", "PE"], help=argparse.SUPPRESS)
+    parser.add_argument("--intraday", action="store_true", help="default is delivery")
+    parser.add_argument("--algoid", default="0", help="Algo ID if you are a registered algo user")
+    parser.add_argument(
+        "--minimal",
+        action="store_true",
+        help="omit RemoteOrderID and AlgoID from the request body",
+    )
+    parser.add_argument("--ltp-only", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--confirm", action="store_true", help="really send the order")
+    return parser
+
+
+def submit_order(body, settings):
+    client, token = authenticated_client(settings)
+    response = requests.post(
+        URL,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"bearer {token}",
+        },
+        json={"head": {"key": settings["USER_KEY"].strip()}, "body": body},
+        timeout=20,
+    )
+    print("\nHTTP", response.status_code)
+    response.raise_for_status()
+    try:
+        result = response.json()
+    except requests.exceptions.JSONDecodeError as error:
+        print(response.text)
+        raise RuntimeError("5paisa returned a non-JSON response.") from error
+    print(json.dumps(result, indent=2))
+    if not isinstance(result, dict):
+        raise RuntimeError("5paisa returned an unexpected response format.")
+
+    head = result.get("head") or {}
+    order_result = result.get("body") or {}
+    if not isinstance(head, dict) or not isinstance(order_result, dict):
+        raise RuntimeError("5paisa returned an unexpected response format.")
+    if head.get("status") == "0" and order_result.get("Status") == 0:
+        print(
+            f"\nAMO accepted. BrokerOrderID={order_result.get('BrokerOrderID')} "
+            f"RemoteOrderID={order_result.get('RemoteOrderID')}"
+        )
+        return 0
+
+    message = order_result.get("Message") or head.get("statusDescription")
+    print(f"\nNOT placed: {message}")
+    hints = {
+        "Authentication Fails": "access token is expired/invalid; log in again.",
+        "Invalid Session": "log in again with the correct account.",
+        "Invalid Input Parameters.": "check scrip code, quantity, price, trigger, and request fields.",
+    }
+    if head.get("status") == "2" or "Invalid Head" in str(message):
+        print("Hint: USER_KEY (app key) in the request head is wrong.")
+    elif message in hints:
+        print("Hint:", hints[message])
+    elif order_result.get("Status") == 1:
+        print("Hint: 5paisa's RMS rejected the AMO; check the message above with 5paisa.")
+    return 1
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.scripdata is not None and not args.scripdata.strip():
+        parser.error("--scripdata must be a non-empty symbol")
+
+    if args.ltp_only:
+        quote_fields = (args.symbol, args.expiry, args.strike, args.option_type)
+        if args.scripcode is None or any(field is None for field in quote_fields):
+            parser.error(
+                "--ltp-only requires --scripcode, --symbol, --expiry, --strike, and --option-type"
+            )
+        settings = load_settings()
+        client, _ = authenticated_client(settings, quiet=True)
+        ltp = fetch_ltp(
+            client,
+            args.scripcode,
+            args.exch,
+            args.exchtype,
+            args.symbol,
+            args.expiry,
+            args.strike,
+            args.option_type,
+        )
+        print(f"LTP={format(ltp, 'f')}")
+        return 0
+
+    if args.qty is None or args.price is None or args.side is None:
+        parser.error("--qty, --price, and --side are required for an order")
+    body = build_body(args)
+    print("AMO stop-loss limit order to place:\n", json.dumps(body, indent=2))
+    if not args.confirm:
+        print("\nDRY RUN - nothing sent. Add --confirm to place it.")
+        return 0
+    return submit_order(body, load_settings())
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (
+        configparser.Error,
+        FileNotFoundError,
+        KeyError,
+        OSError,
+        requests.RequestException,
+        RuntimeError,
+        ValueError,
+    ) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        sys.exit(1)
