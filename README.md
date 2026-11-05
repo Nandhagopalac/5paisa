@@ -6,6 +6,12 @@ Order scripts are grouped by order type under `Order\`:
 - `Order\limit\` - place regular limit orders
 - `Order\market\` - place market orders and close a selected open position
 
+Cancel all pending AMO orders (no per-order confirmation) with:
+
+```powershell
+.\Order\amo\amo_cancel.ps1
+```
+
 PowerShell shortcuts can be run from the project root or another working
 directory, for example:
 

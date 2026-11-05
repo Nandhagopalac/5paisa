@@ -3,7 +3,7 @@ param(
     [int] $Quantity = 65,
 
     [ValidateRange(0, [double]::MaxValue)]
-    [double] $Price = 92.5,
+    [double] $Price = 12.5,
 
     [ValidateSet("B", "S")]
     [string] $Side = "B",

@@ -1,10 +1,9 @@
-"""Select and cancel a pending 5paisa after-market order from the order book.
+"""Cancel all pending 5paisa after-market orders from the order book.
 
 Run from the project root (or any working directory):
     & .\\.venv_5paisa\\Scripts\\python.exe .\\Order\\amo\\Cancel_AMOorder.py
-Use Up/Down and Enter to cancel; Esc exits without cancelling.
+Every cancellable pending AMO is submitted for cancellation without prompting.
 """
-import argparse
 import base64
 import binascii
 import configparser
@@ -15,7 +14,6 @@ import sys
 import time
 from pathlib import Path
 
-import msvcrt
 from py5paisa import FivePaisaClient
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -161,58 +159,41 @@ def describe(order):
     )
 
 
-def choose_order(orders):
-    selected_index = 0
-    while True:
-        os.system("cls")
-        print("Pending AMO orders — Up/Down to select, Enter to cancel, Esc to exit\n")
-        for index, order in enumerate(orders):
-            marker = ">" if index == selected_index else " "
-            print(f"{marker} {describe(order)}")
-
-        key = msvcrt.getch()
-        if key in (b"\x00", b"\xe0"):
-            arrow = msvcrt.getch()
-            if arrow == b"H":
-                selected_index = (selected_index - 1) % len(orders)
-            elif arrow == b"P":
-                selected_index = (selected_index + 1) % len(orders)
-        elif key == b"\r":
-            return orders[selected_index]
-        elif key == b"\x1b":
-            return None
-
-
 def main():
-    parser = argparse.ArgumentParser(
-        description="Choose a pending 5paisa AMO from the order book and cancel it."
-    )
-    parser.parse_args()
-
     client = authenticated_client()
     orders = cancellable_amo_orders(client.order_book())
     if not orders:
-        print("No pending AMO orders with an exchange order ID were found.")
+        print("No pending AMO orders with an exchange order ID were found. Nothing cancelled.")
         return 0
 
-    selected_order = choose_order(orders)
-    if selected_order is None:
-        print("Cancelled selection; no order was sent to the broker.")
-        return 0
+    print(f"Cancelling all {len(orders)} pending AMO order(s):")
+    failures = 0
+    cancelled_ids = set()
+    for order in orders:
+        order_id = str(value(order, "ExchOrderID", "ExchangeOrderID")).strip()
+        if order_id in cancelled_ids:
+            continue
+        cancelled_ids.add(order_id)
+        print(f"\nCancelling: {describe(order)}")
+        response = client.cancel_order(order_id)
+        if not isinstance(response, dict):
+            print(f"FAILED: no valid cancellation response for exchange order {order_id}.")
+            failures += 1
+            continue
 
-    order_id = str(value(selected_order, "ExchOrderID", "ExchangeOrderID")).strip()
-    print(f"\nCancelling AMO: {describe(selected_order)}")
-    response = client.cancel_order(order_id)
-    if not isinstance(response, dict):
-        raise RuntimeError("5paisa returned no cancellation response.")
+        print(json.dumps(response, indent=2, default=str))
+        status = response.get("Status")
+        if status is None or str(status) not in {"0", "200"}:
+            message = response.get("Message") or f"Unexpected cancellation status: {status!r}."
+            print(f"FAILED: exchange order {order_id}: {message}")
+            failures += 1
+            continue
+        print(f"Cancellation request accepted for exchange order {order_id}.")
 
-    print(json.dumps(response, indent=2, default=str))
-    status = response.get("Status")
-    if status is not None and str(status) not in {"0", "200"}:
-        raise RuntimeError(
-            str(response.get("Message") or f"5paisa did not accept cancellation (Status={status}).")
-        )
-    print("Cancellation request accepted by 5paisa.")
+    if failures:
+        print(f"\nCancellation finished with {failures} failure(s).")
+        return 1
+    print(f"\nCancellation requests accepted for all {len(cancelled_ids)} pending AMO order(s).")
     return 0
 
 
