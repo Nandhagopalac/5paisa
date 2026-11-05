@@ -2,7 +2,7 @@
 
 Run from the project root (dry run by default):
     & .\\.venv_5paisa\\Scripts\\python.exe .\\Order\\limit\\Place_limitorder.py --scripcode 47133 --qty 65 --price 7.5 --side B
-    .\\Order\\limit\\limit.ps1 -Quantity 1 -Price 445 -Side B
+    .\\Order\\limit\\limit.ps1 -Quantity 1 -Side B
 
 Add --confirm to submit. Credentials are read from config.ini next to the
 project root, or from the file named by FP_CONFIG. If login is required, open
@@ -122,6 +122,107 @@ def get_access_token(settings):
     return token
 
 
+def quote_ltp(response, scripcode):
+    if not isinstance(response, (dict, list)):
+        raise RuntimeError("5paisa returned an unexpected market-feed response.")
+
+    quotes = []
+    ltp_keys = ("LastRate", "LTP", "LastTradedPrice", "LastTradedRate")
+    token_keys = ("ScripCode", "Token", "token", "ExchScripCode", "InstrumentToken")
+
+    def visit(value):
+        if isinstance(value, dict):
+            rate = next((value[key] for key in ltp_keys if value.get(key) is not None), None)
+            if rate is not None:
+                token = next((value[key] for key in token_keys if value.get(key) is not None), None)
+                quotes.append((token, rate))
+            for nested in value.values():
+                visit(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                visit(nested)
+
+    visit(response)
+    exact_matches = [
+        rate for token, rate in quotes
+        if token is not None and str(token).strip() == str(scripcode)
+    ]
+    if len(exact_matches) == 1:
+        selected_rate = exact_matches[0]
+    elif len(exact_matches) > 1:
+        raise RuntimeError(
+            f"5paisa returned multiple LTP values for scrip code {scripcode}; refusing to choose one."
+        )
+    elif len(quotes) == 1:
+        selected_rate = quotes[0][1]
+    else:
+        body = response.get("body", response) if isinstance(response, dict) else response
+        message = ""
+        if isinstance(body, dict):
+            message = str(body.get("Message") or body.get("Error") or "")
+        details = f"Found {len(quotes)} quote records."
+        if message:
+            details += f" 5paisa message: {message}."
+        raise RuntimeError(
+            f"Could not identify one LTP for scrip code {scripcode}. {details}"
+        )
+
+    try:
+        ltp = Decimal(str(selected_rate))
+    except InvalidOperation as error:
+        raise RuntimeError("5paisa returned an invalid LTP.") from error
+    if not ltp.is_finite() or ltp <= 0:
+        raise RuntimeError(f"5paisa returned no usable LTP for scrip code {scripcode}.")
+    return ltp
+
+
+def fetch_ltp(client, scripcode, exchange, exchange_type, symbol, expiry, strike, option_type):
+    response = client.fetch_market_feed(
+        [
+            {
+                "Exch": exchange,
+                "ExchType": exchange_type,
+                "Symbol": symbol,
+                "Expiry": expiry,
+                "StrikePrice": strike,
+                "OptionType": option_type,
+            }
+        ]
+    )
+    return quote_ltp(response, scripcode)
+
+
+def load_settings():
+    config = configparser.ConfigParser(interpolation=None)
+    if not config.read(CONFIG):
+        raise FileNotFoundError(
+            f"Cannot find configuration file: {CONFIG}. Set FP_CONFIG to its path if needed."
+        )
+    if not config.has_section("5paise_login"):
+        raise configparser.NoSectionError("5paise_login")
+    return config["5paise_login"]
+
+
+def get_market_feed_client(settings):
+    from py5paisa import FivePaisaClient
+
+    credentials = {
+        key: settings[key].strip()
+        for key in (
+            "APP_NAME",
+            "APP_SOURCE",
+            "USER_ID",
+            "PASSWORD",
+            "USER_KEY",
+            "ENCRYPTION_KEY",
+        )
+    }
+    token = get_access_token(settings)
+    client = FivePaisaClient(cred=credentials)
+    client.set_access_token(token, settings["CLIENT_CODE"].strip())
+    return client
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Place a regular 5paisa limit order (dry run unless --confirm is used)."
@@ -129,11 +230,16 @@ def main():
     script = parser.add_mutually_exclusive_group(required=True)
     script.add_argument("--scripcode", type=positive_int, help="numeric scrip code, e.g. 1660 (ITC)")
     script.add_argument("--scripdata", type=nonempty_symbol, help="symbol such as ITC_EQ")
-    parser.add_argument("--qty", type=positive_int, required=True)
-    parser.add_argument("--price", type=positive_price, required=True, help="positive limit price")
-    parser.add_argument("--side", choices=("B", "S"), required=True, help="B=buy, S=sell")
+    parser.add_argument("--qty", type=positive_int)
+    parser.add_argument("--price", type=positive_price, help="positive limit price")
+    parser.add_argument("--side", choices=("B", "S"), help="B=buy, S=sell")
     parser.add_argument("--exch", default="N", help="N=NSE, B=BSE, M=MCX")
     parser.add_argument("--exchtype", default="C", help="C=cash, D=derivatives, U=currency")
+    parser.add_argument("--symbol", help=argparse.SUPPRESS)
+    parser.add_argument("--expiry", help=argparse.SUPPRESS)
+    parser.add_argument("--strike", help=argparse.SUPPRESS)
+    parser.add_argument("--option-type", choices=("CE", "PE"), help=argparse.SUPPRESS)
+    parser.add_argument("--ltp-only", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--intraday", action="store_true", help="default is delivery")
     parser.add_argument("--algoid", default="0", help="Algo ID if you are a registered algo user")
     parser.add_argument(
@@ -143,6 +249,29 @@ def main():
     )
     parser.add_argument("--confirm", action="store_true", help="really send the order")
     args = parser.parse_args()
+
+    if args.ltp_only:
+        quote_fields = (args.symbol, args.expiry, args.strike, args.option_type)
+        if args.scripcode is None or any(field is None for field in quote_fields):
+            parser.error(
+                "--ltp-only requires --scripcode, --symbol, --expiry, --strike, and --option-type"
+            )
+        client = get_market_feed_client(load_settings())
+        ltp = fetch_ltp(
+            client,
+            args.scripcode,
+            args.exch,
+            args.exchtype,
+            args.symbol,
+            args.expiry,
+            args.strike,
+            args.option_type,
+        )
+        print(f"LTP={format(ltp, 'f')}")
+        return 0
+
+    if args.qty is None or args.side is None or args.price is None:
+        parser.error("--qty, --side, and --price are required to place a limit order")
 
     price = format(args.price.normalize(), "f")
     body = {
