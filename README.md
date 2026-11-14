@@ -16,11 +16,22 @@ Place an AMO from the option selector with `.\Order\amo\amo.ps1`. It fetches
 the selected contract's LTP, then prompts for the limit and stop-loss trigger
 prices before submitting.
 
+The regular limit-order shortcut displays the selected contract's LTP when
+available. If 5paisa has no current quote, enter the limit price manually; the
+script does not infer a price.
+
+The shortcut also asks for a stop-loss percentage based on the entry limit
+price. It monitors the entry and submits a stop-market exit for each reported
+fill. Keep the PowerShell window and PC running while the entry is pending.
+Stop-market orders prioritize execution after the trigger but cannot guarantee
+the fill price; gaps and thin liquidity can cause slippage.
+
 PowerShell shortcuts can be run from the project root or another working
 directory, for example:
 
 ```powershell
 .\Order\market\market.ps1 -Quantity 65 -Side B
+.\Order\limit\limit.ps1 -Quantity 65 -Side B -StopLossPercent 2
 ```
 
 The Python scripts default to a dry run. Add `--confirm` only when ready to

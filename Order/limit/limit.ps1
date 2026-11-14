@@ -5,6 +5,9 @@ param(
     [ValidateScript({ $_ -gt 0 })]
     [decimal] $Price,
 
+    [ValidateScript({ $_ -gt 0 -and $_ -lt 100 })]
+    [decimal] $StopLossPercent,
+
     [ValidateSet("B", "S")]
     [string] $Side = "B",
 
@@ -25,6 +28,23 @@ function Read-PositivePrice([string] $Prompt) {
             return $parsedPrice.ToString("0.################", [cultureinfo]::InvariantCulture)
         }
         Write-Host "Enter a positive price using a decimal point (for example, 92.5)." -ForegroundColor Red
+    }
+}
+
+function Read-PositivePercentage([string] $Prompt) {
+    while ($true) {
+        $inputPercent = Read-Host $Prompt
+        $parsedPercent = [decimal]::Zero
+        $validPercent = [decimal]::TryParse(
+            $inputPercent,
+            [Globalization.NumberStyles]::AllowDecimalPoint,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [ref] $parsedPercent
+        )
+        if ($validPercent -and $parsedPercent -gt 0 -and $parsedPercent -lt 100) {
+            return $parsedPercent.ToString("0.################", [cultureinfo]::InvariantCulture)
+        }
+        Write-Host "Enter a percentage greater than 0 and less than 100 (for example, 2)." -ForegroundColor Red
     }
 }
 
@@ -188,12 +208,15 @@ if ($quoteExitCode -ne 0) {
     exit $quoteExitCode
 }
 $quoteText = ($quoteOutput -join "`n")
-$ltpMatch = [regex]::Match($quoteText, "(?m)^LTP=([0-9]+(?:\.[0-9]+)?)\s*$")
+$ltpMatch = [regex]::Match($quoteText, "(?m)^LTP=(UNAVAILABLE|[0-9]+(?:\.[0-9]+)?)\s*$")
 if (-not $ltpMatch.Success) {
-    Write-Error "The quote response did not contain a usable LTP. No order was sent."
+    Write-Error "The quote response did not contain an LTP status. No order was sent."
     exit 1
 }
-$ltpText = $ltpMatch.Groups[1].Value
+$ltpText = $null
+if ($ltpMatch.Groups[1].Value -ne "UNAVAILABLE") {
+    $ltpText = $ltpMatch.Groups[1].Value
+}
 $orderSide = "Buy"
 if ($Side -eq "S") {
     $orderSide = "Sell"
@@ -203,7 +226,13 @@ Write-Host ""
 Write-Host "Selected limit-order contract:" -ForegroundColor Cyan
 Write-Host ("  {0} {1} {2} | ScripCode {3}" -f `
     $contract.OptionType, $contract.StrikePrice, $contract.Expiry, $contract.ScripCode)
-Write-Host ("  LTP: {0}" -f $ltpText) -ForegroundColor Yellow
+if ($ltpText) {
+    Write-Host ("  LTP: {0}" -f $ltpText) -ForegroundColor Yellow
+}
+else {
+    Write-Host "  LTP unavailable (5paisa returned no current market price)." -ForegroundColor Yellow
+    Write-Host "  Enter the limit price manually; no price will be inferred."
+}
 Write-Host ("  {0} {1} | Qty {2} | Exchange {3}/{4}" -f `
     $orderSide, $contract.OptionType, $Quantity, $contract.Exchange, $contract.ExchangeType)
 if ($PSBoundParameters.ContainsKey("Price")) {
@@ -213,12 +242,22 @@ else {
     $priceText = Read-PositivePrice "Enter limit price"
 }
 Write-Host ("  Limit price {0}" -f $priceText)
+if ($PSBoundParameters.ContainsKey("StopLossPercent")) {
+    $stopLossPercentText = $StopLossPercent.ToString("0.################", [cultureinfo]::InvariantCulture)
+}
+else {
+    $stopLossPercentText = Read-PositivePercentage "Enter stop-loss percentage from entry limit price"
+}
+Write-Host ("  Stop-market protection: {0}% from entry limit price" -f $stopLossPercentText)
+Write-Host "  Keep this window and the PC awake until the entry fills or is cancelled."
+Write-Host "  A market stop can execute at a different price if the market gaps or liquidity is thin."
 
 $pythonArgs = @(
     $orderScript,
     "--scripcode", $contract.ScripCode,
     "--qty", $Quantity,
     "--price", $priceText,
+    "--stop-loss-percent", $stopLossPercentText,
     "--side", $Side,
     "--exch", $contract.Exchange,
     "--exchtype", $contract.ExchangeType,
