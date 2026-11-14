@@ -182,12 +182,19 @@ if ($quoteExitCode -ne 0) {
 }
 
 $quoteText = ($quoteOutput -join "`n")
-$ltpMatch = [regex]::Match($quoteText, "(?m)^LTP=([0-9]+(?:\.[0-9]+)?)\s*$")
+$ltpMatch = [regex]::Match($quoteText, "(?m)^LTP=(UNAVAILABLE|[0-9]+(?:\.[0-9]+)?)\s*$")
 if (-not $ltpMatch.Success) {
-    Write-Error "The quote response did not contain a usable LTP. No order was sent."
+    Write-Error "The quote response did not contain an LTP status. No order was sent."
     exit 1
 }
-$ltpText = $ltpMatch.Groups[1].Value
+$ltpText = $null
+if ($ltpMatch.Groups[1].Value -ne "UNAVAILABLE") {
+    $ltpText = $ltpMatch.Groups[1].Value
+}
+$previousCloseMatch = [regex]::Match(
+    $quoteText,
+    "(?m)^PREVIOUS_CLOSE=([0-9]+(?:\.[0-9]+)?)\s*$"
+)
 $orderSide = "Buy"
 if ($Side -eq "S") {
     $orderSide = "Sell"
@@ -197,7 +204,17 @@ Write-Host ""
 Write-Host "Selected AMO contract:" -ForegroundColor Cyan
 Write-Host ("  {0} {1} {2} | ScripCode {3}" -f `
     $contract.OptionType, $contract.StrikePrice, $contract.Expiry, $contract.ScripCode)
-Write-Host ("  LTP: {0}" -f $ltpText) -ForegroundColor Yellow
+if ($ltpText) {
+    Write-Host ("  LTP: {0}" -f $ltpText) -ForegroundColor Yellow
+}
+else {
+    Write-Host "  LTP unavailable (5paisa returned no fresh market price)." -ForegroundColor Yellow
+    if ($previousCloseMatch.Success) {
+        Write-Host ("  Previous close: {0} (reference only; not a current LTP)." -f `
+            $previousCloseMatch.Groups[1].Value)
+    }
+    Write-Host "  Enter the limit and trigger prices manually; no price will be inferred."
+}
 Write-Host ("  {0} {1} | Qty {2} | Exchange {3}/{4}" -f `
     $orderSide, $contract.OptionType, $Quantity, $contract.Exchange, $contract.ExchangeType)
 $priceText = Read-PositivePrice "Enter limit price"

@@ -118,20 +118,25 @@ def authenticated_client(settings, *, quiet=False):
     return client, token
 
 
-def quote_ltp(response, scripcode):
+def quote_prices(response, scripcode):
     if not isinstance(response, (dict, list)):
         raise RuntimeError("5paisa returned an unexpected market-feed response.")
 
     quotes = []
     ltp_keys = ("LastRate", "LTP", "LastTradedPrice", "LastTradedRate")
+    previous_close_keys = ("PClose", "PreviousClose", "PreviousCloseRate")
     token_keys = ("ScripCode", "Token", "token", "ExchScripCode", "InstrumentToken")
 
     def visit(value):
         if isinstance(value, dict):
             rate = next((value[key] for key in ltp_keys if value.get(key) is not None), None)
-            if rate is not None:
+            previous_close = next(
+                (value[key] for key in previous_close_keys if value.get(key) is not None),
+                None,
+            )
+            if rate is not None or previous_close is not None:
                 token = next((value[key] for key in token_keys if value.get(key) is not None), None)
-                quotes.append((token, rate))
+                quotes.append((token, rate, previous_close))
             for nested in value.values():
                 visit(nested)
         elif isinstance(value, list):
@@ -140,18 +145,18 @@ def quote_ltp(response, scripcode):
 
     visit(response)
     exact_matches = [
-        rate for token, rate in quotes
+        quote for token, *quote in quotes
         if token is not None and str(token).strip() == str(scripcode)
     ]
     if len(exact_matches) == 1:
-        selected_rate = exact_matches[0]
+        selected_quote = exact_matches[0]
     elif len(exact_matches) > 1:
         raise RuntimeError(
             f"5paisa returned multiple LTP values for scrip code {scripcode}; "
             "refusing to choose one."
         )
     elif len(quotes) == 1:
-        selected_rate = quotes[0][1]
+        selected_quote = quotes[0][1:]
     else:
         if not quotes:
             response_fields = sorted(response.keys()) if isinstance(response, dict) else []
@@ -169,13 +174,21 @@ def quote_ltp(response, scripcode):
             )
         raise RuntimeError(f"Could not identify one LTP for scrip code {scripcode}.{details}")
 
-    try:
-        ltp = Decimal(str(selected_rate))
-    except InvalidOperation as error:
-        raise RuntimeError("5paisa returned an invalid LTP.") from error
-    if not ltp.is_finite() or ltp <= 0:
-        raise RuntimeError(f"5paisa returned no usable LTP for scrip code {scripcode}.")
-    return ltp
+    def positive_quote(value, label):
+        if value is None:
+            return None
+        try:
+            price = Decimal(str(value))
+        except InvalidOperation as error:
+            raise RuntimeError(f"5paisa returned an invalid {label}.") from error
+        if not price.is_finite() or price < 0:
+            raise RuntimeError(f"5paisa returned an invalid {label}.")
+        return price if price > 0 else None
+
+    return (
+        positive_quote(selected_quote[0], "LTP"),
+        positive_quote(selected_quote[1], "previous close"),
+    )
 
 
 def fetch_ltp(client, scripcode, exchange, exchange_type, symbol, expiry, strike, option_type):
@@ -191,7 +204,7 @@ def fetch_ltp(client, scripcode, exchange, exchange_type, symbol, expiry, strike
             }
         ]
     )
-    return quote_ltp(response, scripcode)
+    return quote_prices(response, scripcode)
 
 
 def build_body(args):
@@ -314,7 +327,7 @@ def main():
             )
         settings = load_settings()
         client, _ = authenticated_client(settings, quiet=True)
-        ltp = fetch_ltp(
+        ltp, previous_close = fetch_ltp(
             client,
             args.scripcode,
             args.exch,
@@ -324,7 +337,12 @@ def main():
             args.strike,
             args.option_type,
         )
-        print(f"LTP={format(ltp, 'f')}")
+        if ltp is None:
+            print("LTP=UNAVAILABLE")
+        else:
+            print(f"LTP={format(ltp, 'f')}")
+        if previous_close is not None:
+            print(f"PREVIOUS_CLOSE={format(previous_close, 'f')}")
         return 0
 
     if args.qty is None or args.price is None or args.side is None:
