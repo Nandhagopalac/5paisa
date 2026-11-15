@@ -58,9 +58,9 @@ own risk controls before trading.
 
 The `.github/workflows/sensibull-screenshot.yml` workflow captures the
 Sensibull option-chain page every 10 minutes on weekdays from 09:15 through
-15:25 IST. GitHub scheduled workflows are best-effort and may start late.
-It requires a Windows self-hosted Actions runner on an always-on device you
-control; it will not run while that device is off.
+15:25 IST using a GitHub-hosted Windows runner, so your laptop can be off.
+GitHub scheduled workflows are best-effort and may start late. Each run uploads
+the PNG as a GitHub Actions artifact, available from the workflow run for 7 days.
 
 The script uses the Microsoft Edge already installed on the runner; it does
 not install Playwright or a separate browser. Install the project dependencies
@@ -71,12 +71,11 @@ python -m pip install -r .\requirements.txt
 python .\Option_chain\sensibull_screenshot.py --tradingsymbol NIFTY --expiry 2026-11-17
 ```
 
-The PNG is saved under
-`C:\Users\agalya\OneDrive\Pictures\OpenBoard`. The symbol and expiry can be
-changed with the command-line options; `workflow_dispatch` also exposes them
-as inputs. Register a Windows self-hosted runner from the repository's
-**Settings > Actions > Runners** page and keep it online for scheduled captures.
-The workflow only captures the page and does not place orders. Check
+When running the script locally, the PNG is saved under
+`C:\Users\agalya\OneDrive\Pictures\OpenBoard`. Cloud workflow screenshots are
+available under **Actions > select a run > Artifacts**. The symbol and expiry
+can be changed with the command-line options or the workflow's manual-run
+inputs. The workflow only captures the page and does not place orders. Check
 Sensibull's terms before automating access.
 
 The Python scripts default to a dry run. Add `--confirm` only when ready to

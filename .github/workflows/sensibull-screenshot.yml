@@ -26,8 +26,8 @@ concurrency:
 
 jobs:
   capture:
-    runs-on: [self-hosted, windows, x64]
-    timeout-minutes: 5
+    runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -39,5 +39,17 @@ jobs:
         run: python -m pip install -r .\requirements.txt
         shell: pwsh
       - name: Capture option chain
-        run: python .\Option_chain\sensibull_screenshot.py --tradingsymbol "${{ inputs.tradingsymbol || 'NIFTY' }}" --expiry "${{ inputs.expiry || '2026-11-17' }}"
+        env:
+          TRADING_SYMBOL: ${{ inputs.tradingsymbol || 'NIFTY' }}
+          EXPIRY_DATE: ${{ inputs.expiry || '2026-11-17' }}
+        run: |
+          $outputDir = Join-Path $env:RUNNER_TEMP "SensibullScreenshots"
+          python .\Option_chain\sensibull_screenshot.py --tradingsymbol "$env:TRADING_SYMBOL" --expiry "$env:EXPIRY_DATE" --output-dir "$outputDir"
         shell: pwsh
+      - name: Save screenshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sensibull-screenshot-${{ github.run_id }}
+          path: ${{ runner.temp }}\SensibullScreenshots\*.png
+          if-no-files-found: error
+          retention-days: 7
