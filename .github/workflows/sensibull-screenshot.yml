@@ -5,6 +5,17 @@ on:
     - cron: "45,55 3 * * 1-5"
     - cron: "5,15,25,35,45,55 4-9 * * 1-5"
   workflow_dispatch:
+    inputs:
+      tradingsymbol:
+        description: Trading symbol
+        required: false
+        default: NIFTY
+        type: string
+      expiry:
+        description: Expiry date in YYYY-MM-DD format
+        required: false
+        default: "2026-11-17"
+        type: string
 
 permissions:
   contents: read
@@ -23,12 +34,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: Option_chain/requirements.txt
-      - name: Install screenshot dependencies
-        run: |
-          python -m pip install -r .\Option_chain\requirements.txt
-          python -m playwright install chromium
+          cache-dependency-path: requirements.txt
+      - name: Install project dependencies
+        run: python -m pip install -r .\requirements.txt
         shell: pwsh
       - name: Capture option chain
-        run: python .\Option_chain\sensibull_screenshot.py
+        run: python .\Option_chain\sensibull_screenshot.py --tradingsymbol "${{ inputs.tradingsymbol || 'NIFTY' }}" --expiry "${{ inputs.expiry || '2026-11-17' }}"
         shell: pwsh

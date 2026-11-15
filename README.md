@@ -62,23 +62,22 @@ Sensibull option-chain page every 10 minutes on weekdays from 09:15 through
 It requires a Windows self-hosted Actions runner on an always-on device you
 control; it will not run while that device is off.
 
-On the runner device, install the dependencies and browser, then open a
-browser to log in once for the day:
+The script uses the Microsoft Edge already installed on the runner; it does
+not install Playwright or a separate browser. Install the project dependencies
+once, then capture a screenshot manually:
 
 ```powershell
-python -m pip install -r .\Option_chain\requirements.txt
-python -m playwright install chromium
-python .\Option_chain\sensibull_screenshot.py --login
+python -m pip install -r .\requirements.txt
+python .\Option_chain\sensibull_screenshot.py --tradingsymbol NIFTY --expiry 2026-11-17
 ```
 
-Configure the self-hosted runner to run under the same Windows account used
-for this login. Register it from the repository's **Settings > Actions >
-Runners** page, and keep the runner process online. The workflow reuses that
-account's local browser profile and saves screenshots under
-`%USERPROFILE%\SensibullScreenshots`; it does not upload screenshots or login
-data to GitHub. If the daily session expires, run the login command again. The
-workflow only captures the page and does not place orders. Check Sensibull's
-terms before automating access.
+The PNG is saved under
+`C:\Users\agalya\OneDrive\Pictures\OpenBoard`. The symbol and expiry can be
+changed with the command-line options; `workflow_dispatch` also exposes them
+as inputs. Register a Windows self-hosted runner from the repository's
+**Settings > Actions > Runners** page and keep it online for scheduled captures.
+The workflow only captures the page and does not place orders. Check
+Sensibull's terms before automating access.
 
 The Python scripts default to a dry run. Add `--confirm` only when ready to
 submit an order. The PowerShell market-order shortcut submits immediately
