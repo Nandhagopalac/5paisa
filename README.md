@@ -34,6 +34,52 @@ directory, for example:
 .\Order\limit\limit.ps1 -Quantity 65 -Side B -StopLossPercent 2
 ```
 
+### NIFTY ATM options monitor
+
+Run the read-only, polling Streamlit dashboard from the project root:
+
+```powershell
+streamlit run .\Streaming\nifty\app.py
+```
+
+It reads the 5paisa credentials and access token from `config.ini`, uses
+`scrip_master.csv` to find the nearest ATM NIFTY call and put for the selected
+expiry, and polls the index and option quotes every five seconds by default.
+The polling interval and index scrip code can be changed in the sidebar. Refresh
+the local contract master with
+`python .\Cache\cachefile.py --refresh-cache` when it is out of date.
+
+The dashboard only displays market data; it does not place orders or generate
+trade-entry recommendations. Polling is not a guaranteed tick-by-tick feed, and
+quotes can be delayed or unavailable. Validate the quotes, liquidity, and your
+own risk controls before trading.
+
+### Sensibull option-chain screenshots
+
+The `.github/workflows/sensibull-screenshot.yml` workflow captures the
+Sensibull option-chain page every 10 minutes on weekdays from 09:15 through
+15:25 IST. GitHub scheduled workflows are best-effort and may start late.
+It requires a Windows self-hosted Actions runner on an always-on device you
+control; it will not run while that device is off.
+
+On the runner device, install the dependencies and browser, then open a
+browser to log in once for the day:
+
+```powershell
+python -m pip install -r .\Option_chain\requirements.txt
+python -m playwright install chromium
+python .\Option_chain\sensibull_screenshot.py --login
+```
+
+Configure the self-hosted runner to run under the same Windows account used
+for this login. Register it from the repository's **Settings > Actions >
+Runners** page, and keep the runner process online. The workflow reuses that
+account's local browser profile and saves screenshots under
+`%USERPROFILE%\SensibullScreenshots`; it does not upload screenshots or login
+data to GitHub. If the daily session expires, run the login command again. The
+workflow only captures the page and does not place orders. Check Sensibull's
+terms before automating access.
+
 The Python scripts default to a dry run. Add `--confirm` only when ready to
 submit an order. The PowerShell market-order shortcut submits immediately
 without an additional confirmation prompt.
