@@ -1,0 +1,93 @@
+//@version=5
+indicator("Nifty Synthetic Future (Strike based)", overlay=true)
+
+// ---------- Inputs ----------
+spotSym    = input.symbol("NSE:NIFTY",   "Spot symbol")
+futSym     = input.symbol("NSE:NIFTY1!", "Monthly future symbol")
+strike     = input.int(25150, "Strike (ATM)", step=50)
+expYear    = input.int(2026, "Expiry year")
+expMonth   = input.int(11,   "Expiry month", minval=1, maxval=12)
+expDay     = input.int(17,   "Expiry day",   minval=1, maxval=31)
+overrideCE = input.string("", "CE symbol override (optional)")
+overridePE = input.string("", "PE symbol override (optional)")
+liveTf     = input.timeframe("1", "Live feed timeframe (1S = 1 second, paid plan)")
+showLine   = input.bool(true, "Plot synthetic future line")
+showTime   = input.bool(true, "Show data timestamps (to detect delayed feed)")
+tblPos     = input.string("Bottom right", "Table position", options=["Top right", "Top left", "Top center", "Middle right", "Middle left", "Bottom right", "Bottom left", "Bottom center"])
+tblSize    = input.string("Tiny", "Table text size", options=["Tiny", "Small", "Normal"])
+
+// ---------- Option symbols (NSE:NIFTY261117C25150 format) ----------
+pad2(n) => n < 10 ? "0" + str.tostring(n) : str.tostring(n)
+dateStr = pad2(expYear % 100) + pad2(expMonth) + pad2(expDay)
+ceSym   = overrideCE != "" ? overrideCE : "NSE:NIFTY" + dateStr + "C" + str.tostring(strike)
+peSym   = overridePE != "" ? overridePE : "NSE:NIFTY" + dateStr + "P" + str.tostring(strike)
+
+// ---------- Live feed for the info box ----------
+spot = request.security(spotSym, liveTf, close, ignore_invalid_symbol=true)
+ce   = request.security(ceSym,   liveTf, close, ignore_invalid_symbol=true)
+pe   = request.security(peSym,   liveTf, close, ignore_invalid_symbol=true)
+fut  = request.security(futSym,  liveTf, close, ignore_invalid_symbol=true)
+
+tSpot = request.security(spotSym, liveTf, time, ignore_invalid_symbol=true)
+tCE   = request.security(ceSym,   liveTf, time, ignore_invalid_symbol=true)
+tPE   = request.security(peSym,   liveTf, time, ignore_invalid_symbol=true)
+tFut  = request.security(futSym,  liveTf, time, ignore_invalid_symbol=true)
+
+// ---------- Chart-timeframe values for the plotted line ----------
+ceC = request.security(ceSym, timeframe.period, close, ignore_invalid_symbol=true)
+peC = request.security(peSym, timeframe.period, close, ignore_invalid_symbol=true)
+
+// ---------- Synthetic future (strike based) ----------
+// PE > CE -> strike - (PE - CE)
+// CE > PE -> strike + (CE - PE)
+synthFn(c, p) => p > c ? strike - (p - c) : strike + (c - p)
+
+dataOk = not na(ce) and not na(pe)
+diff   = dataOk ? math.abs(ce - pe) : na
+synth  = dataOk ? synthFn(ce, pe) : na
+basis  = (not na(fut) and dataOk) ? fut - synth : na
+synthC = (not na(ceC) and not na(peC)) ? synthFn(ceC, peC) : na
+
+atmNow = math.round(spot / 50) * 50
+
+plot(showLine ? synthC : na, "Synthetic Future", color=color.orange, linewidth=2)
+
+// ---------- Info box ----------
+pos = switch tblPos
+    "Top right"     => position.top_right
+    "Top left"      => position.top_left
+    "Top center"    => position.top_center
+    "Middle right"  => position.middle_right
+    "Middle left"   => position.middle_left
+    "Bottom right"  => position.bottom_right
+    "Bottom center" => position.bottom_center
+    => position.bottom_left
+
+sz = tblSize == "Tiny" ? size.tiny : tblSize == "Small" ? size.small : size.normal
+
+fmt(x)  => na(x) ? "n/a" : str.tostring(x, "#.##")
+fmtT(ts) => na(ts) ? "n/a" : str.format_time(ts, "HH:mm", "Asia/Kolkata")
+
+var table t = table.new(pos, 2, 9, border_width=1, frame_color=color.gray, frame_width=1)
+if barstate.islast
+    hdr   = color.new(color.navy, 0)
+    atmOk = strike == atmNow
+    table.cell(t, 0, 0, "Nifty Synth Fut", text_color=color.white, bgcolor=hdr, text_size=sz)
+    table.cell(t, 1, 0, dateStr + " | " + str.tostring(strike), text_color=color.white, bgcolor=hdr, text_size=sz)
+    table.cell(t, 0, 1, "Spot", text_color=color.white, bgcolor=color.gray, text_size=sz)
+    table.cell(t, 1, 1, fmt(spot), text_color=color.white, bgcolor=color.gray, text_size=sz)
+    table.cell(t, 0, 2, "CE " + str.tostring(strike) + " LTP", text_color=color.white, bgcolor=color.gray, text_size=sz)
+    table.cell(t, 1, 2, fmt(ce), text_color=color.white, bgcolor=color.gray, text_size=sz)
+    table.cell(t, 0, 3, "PE " + str.tostring(strike) + " LTP", text_color=color.white, bgcolor=color.gray, text_size=sz)
+    table.cell(t, 1, 3, fmt(pe), text_color=color.white, bgcolor=color.gray, text_size=sz)
+    table.cell(t, 0, 4, pe > ce ? "Strike - (PE-CE)" : "Strike + (CE-PE)", text_color=color.white, bgcolor=color.gray, text_size=sz)
+    table.cell(t, 1, 4, fmt(diff), text_color=color.white, bgcolor=color.gray, text_size=sz)
+    table.cell(t, 0, 5, "Synthetic Future", text_color=color.black, bgcolor=color.orange, text_size=sz)
+    table.cell(t, 1, 5, fmt(synth), text_color=color.black, bgcolor=color.orange, text_size=sz)
+    table.cell(t, 0, 6, "Monthly Future", text_color=color.white, bgcolor=color.teal, text_size=sz)
+    table.cell(t, 1, 6, fmt(fut) + " (basis " + fmt(basis) + ")", text_color=color.white, bgcolor=color.teal, text_size=sz)
+    table.cell(t, 0, 7, "ATM check", text_color=color.white, bgcolor=atmOk ? color.green : color.red, text_size=sz)
+    table.cell(t, 1, 7, atmOk ? "Strike is ATM" : "ATM now: " + str.tostring(atmNow), text_color=color.white, bgcolor=atmOk ? color.green : color.red, text_size=sz)
+    if showTime
+        table.cell(t, 0, 8, "Data time", text_color=color.white, bgcolor=color.gray, text_size=sz)
+        table.cell(t, 1, 8, "S " + fmtT(tSpot) + " C " + fmtT(tCE) + " P " + fmtT(tPE) + " F " + fmtT(tFut), text_color=color.white, bgcolor=color.gray, text_size=sz)

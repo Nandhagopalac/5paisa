@@ -1,0 +1,77 @@
+//@version=5
+indicator("NIFTY Top 10 Movers (Realtime)", overlay=true)
+
+// -------- FUNCTION --------
+f(sym) =>
+    prevDayClose = request.security(sym, "D", close[1], lookahead=barmerge.lookahead_on)
+    live         = request.security(sym, timeframe.period, close)
+    pct          = prevDayClose != 0 ? (live - prevDayClose) / prevDayClose * 100 : 0
+
+    // True last tick delta % using 1-min bars
+    c0       = request.security(sym, "1", close)
+    c1       = request.security(sym, "1", close[1])
+    moveTick = c1 != 0 ? (c0 - c1) / c1 * 100 : 0
+
+    [pct, moveTick]
+
+// -------- SYMBOL VALUES --------
+[p1,m1]  = f("NSE:RELIANCE")
+[p2,m2]  = f("NSE:HDFCBANK")
+[p3,m3]  = f("NSE:ICICIBANK")
+[p4,m4]  = f("NSE:INFY")
+[p5,m5]  = f("NSE:TCS")
+[p6,m6]  = f("NSE:LT")
+[p7,m7]  = f("NSE:ITC")
+[p8,m8]  = f("NSE:AXISBANK")
+[p9,m9]  = f("NSE:SBIN")
+[p10,m10]= f("NSE:BHARTIARTL")
+
+// -------- WEIGHTS --------
+w1=10.5
+w2=9.5
+w3=8.0
+w4=6.5
+w5=5.5
+w6=4.0
+w7=4.0
+w8=3.5
+w9=3.0
+w10=2.8
+
+// -------- ARRAYS --------
+names   = array.from("REL","HDFC","ICICI","INFY","TCS","LT","ITC","AXIS","SBIN","BHARTI")
+weights = array.from(w1,w2,w3,w4,w5,w6,w7,w8,w9,w10)
+vals    = array.from(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10)
+moves   = array.from(m1,m2,m3,m4,m5,m6,m7,m8,m9,m10)
+
+// -------- TABLE --------
+var table tbl = table.new(position.top_right, 5, 11, border_width=1)
+
+if barstate.islast
+    table.clear(tbl, 0, 0, 4, 10)
+
+    // Header
+    table.cell(tbl, 0, 0, "#",     text_size=size.tiny, bgcolor=color.gray, text_color=color.white)
+    table.cell(tbl, 1, 0, "Stock", text_size=size.tiny, bgcolor=color.gray, text_color=color.white)
+    table.cell(tbl, 2, 0, "Wt",    text_size=size.tiny, bgcolor=color.gray, text_color=color.white)
+    table.cell(tbl, 3, 0, "%",     text_size=size.tiny, bgcolor=color.gray, text_color=color.white)
+    table.cell(tbl, 4, 0, "Tick%", text_size=size.tiny, bgcolor=color.gray, text_color=color.white)
+
+    // Rows
+    for i = 0 to 9
+        nm  = array.get(names,   i)
+        wt  = array.get(weights, i)
+        val = array.get(vals,    i)
+        mv  = array.get(moves,   i)
+
+        rowBg = i % 2 == 0 ? color.new(color.white, 0) : color.new(color.silver, 80)
+
+        table.cell(tbl, 0, i+1, str.tostring(i+1),               text_size=size.tiny, bgcolor=rowBg)
+        table.cell(tbl, 1, i+1, nm,                               text_size=size.tiny, bgcolor=rowBg)
+        table.cell(tbl, 2, i+1, str.tostring(wt),                 text_size=size.tiny, bgcolor=rowBg)
+        table.cell(tbl, 3, i+1, str.tostring(val,"#.##") + "%",   text_size=size.tiny,
+             bgcolor=val>0 ? color.new(color.green,20) : color.new(color.red,20),
+             text_color=color.white)
+        table.cell(tbl, 4, i+1, str.tostring(mv,"#.###") + "%",   text_size=size.tiny,
+             bgcolor=mv>0 ? color.new(color.green,20) : color.new(color.red,20),
+             text_color=color.white)
