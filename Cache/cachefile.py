@@ -12,8 +12,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = Path(__file__).resolve().parent
 SCRIP_MASTER_CACHE = PROJECT_ROOT / "scrip_master.csv"
 
-target_strike = 25000
-target_expiry = pd.to_datetime("2026-11-17")
+target_strike = 25200
+target_expiry = pd.to_datetime("2026-11-23")
 underlying = "NIFTY"
 option_types = ("CE", "PE")
 itm_strike_step = 100
