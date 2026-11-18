@@ -1,0 +1,94 @@
+//@version=5
+indicator("Dual Chart Comparison - V1", shorttitle="Dual chart Comparision", overlay=false)
+
+// ---------- Inputs ----------
+g1 = "Symbol 1 Settings"
+en1_in = input.bool(true,  "Enable Symbol 1", group=g1)
+sym1   = input.symbol("NSE:NIFTY261123C25200", "Select Symbol 1", group=g1)
+pd1    = input.bool(false, "Show Symbol 1 Prev Day Lines", group=g1)
+vw1    = input.bool(true,  "Show Symbol 1 VWAP", group=g1)
+
+g2 = "Symbol 2 Settings"
+en2_in = input.bool(true,  "Enable Symbol 2", group=g2)
+sym2   = input.symbol("NSE:NIFTY261123P25200", "Select Symbol 2", group=g2)
+pd2    = input.bool(false, "Show Symbol 2 Prev Day Lines", group=g2)
+vw2    = input.bool(true,  "Show Symbol 2 VWAP", group=g2)
+
+g3 = "Symbol 3 Settings"
+en3    = input.bool(false, "Enable Symbol 3", group=g3)
+sym3   = input.symbol("NSE:BANKNIFTY1!", "Select Symbol 3", group=g3)
+pd3    = input.bool(false, "Show Symbol 3 Prev Day Lines", group=g3)
+vw3    = input.bool(false, "Show Symbol 3 VWAP", group=g3)
+
+g4 = "Symbol 4 Settings"
+en4    = input.bool(false, "Enable Symbol 4", group=g4)
+sym4   = input.symbol("NSE:FINNIFTY1!", "Select Symbol 4", group=g4)
+pd4    = input.bool(false, "Show Symbol 4 Prev Day Lines", group=g4)
+vw4    = input.bool(false, "Show Symbol 4 VWAP", group=g4)
+
+// ---------- View mode ----------
+view = input.string("Both", "View Mode", options=["Both", "Symbol 1 Only", "Symbol 2 Only"], group="View")
+en1 = en1_in and (view == "Both" or view == "Symbol 1 Only")
+en2 = en2_in and (view == "Both" or view == "Symbol 2 Only")
+
+// ---------- Data fetch helpers ----------
+getData(sym) =>
+    request.security(sym, timeframe.period,
+         [open, high, low, close, ta.vwap(hlc3)],
+         gaps=barmerge.gaps_off)
+
+getPrevDay(sym) =>
+    request.security(sym, "D", [high[1], low[1]],
+         gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+
+[o1, h1, l1, c1, v1] = getData(sym1)
+[o2, h2, l2, c2, v2] = getData(sym2)
+[o3, h3, l3, c3, v3] = getData(sym3)
+[o4, h4, l4, c4, v4] = getData(sym4)
+
+[pdh1, pdl1] = getPrevDay(sym1)
+[pdh2, pdl2] = getPrevDay(sym2)
+[pdh3, pdl3] = getPrevDay(sym3)
+[pdh4, pdl4] = getPrevDay(sym4)
+
+// ---------- Candles ----------
+plotcandle(en1 ? o1 : na, en1 ? h1 : na, en1 ? l1 : na, en1 ? c1 : na,
+     title="Symbol 1", color=c1 >= o1 ? #26a69a : #ef5350,
+     wickcolor=c1 >= o1 ? #26a69a : #ef5350, bordercolor=c1 >= o1 ? #26a69a : #ef5350)
+
+plotcandle(en2 ? o2 : na, en2 ? h2 : na, en2 ? l2 : na, en2 ? c2 : na,
+     title="Symbol 2", color=c2 >= o2 ? #4dd0e1 : #f06292,
+     wickcolor=c2 >= o2 ? #4dd0e1 : #f06292, bordercolor=c2 >= o2 ? #4dd0e1 : #f06292)
+
+plotcandle(en3 ? o3 : na, en3 ? h3 : na, en3 ? l3 : na, en3 ? c3 : na,
+     title="Symbol 3", color=c3 >= o3 ? #9ccc65 : #ff8a65,
+     wickcolor=c3 >= o3 ? #9ccc65 : #ff8a65, bordercolor=c3 >= o3 ? #9ccc65 : #ff8a65)
+
+plotcandle(en4 ? o4 : na, en4 ? h4 : na, en4 ? l4 : na, en4 ? c4 : na,
+     title="Symbol 4", color=c4 >= o4 ? #ba68c8 : #ffb74d,
+     wickcolor=c4 >= o4 ? #ba68c8 : #ffb74d, bordercolor=c4 >= o4 ? #ba68c8 : #ffb74d)
+
+// ---------- VWAP ----------
+plot(en1 and vw1 ? v1 : na, "S1 VWAP", color=#ff9800, linewidth=2)
+plot(en2 and vw2 ? v2 : na, "S2 VWAP", color=#9c27b0, linewidth=2)
+plot(en3 and vw3 ? v3 : na, "S3 VWAP", color=#8bc34a, linewidth=2)
+plot(en4 and vw4 ? v4 : na, "S4 VWAP", color=#03a9f4, linewidth=2)
+
+// ---------- Previous day high / low ----------
+plot(en1 and pd1 ? pdh1 : na, "S1 PDH", color=#26a69a, style=plot.style_linebr)
+plot(en1 and pd1 ? pdl1 : na, "S1 PDL", color=#ef5350, style=plot.style_linebr)
+plot(en2 and pd2 ? pdh2 : na, "S2 PDH", color=#4dd0e1, style=plot.style_linebr)
+plot(en2 and pd2 ? pdl2 : na, "S2 PDL", color=#f06292, style=plot.style_linebr)
+plot(en3 and pd3 ? pdh3 : na, "S3 PDH", color=#9ccc65, style=plot.style_linebr)
+plot(en3 and pd3 ? pdl3 : na, "S3 PDL", color=#ff8a65, style=plot.style_linebr)
+plot(en4 and pd4 ? pdh4 : na, "S4 PDH", color=#ba68c8, style=plot.style_linebr)
+plot(en4 and pd4 ? pdl4 : na, "S4 PDL", color=#ffb74d, style=plot.style_linebr)
+
+// ---------- "Selected Symbols" table (top right) ----------
+var table t = table.new(position.top_right, 1, 5, bgcolor=color.new(color.gray, 85))
+if barstate.islast
+    table.cell(t, 0, 0, "Selected Symbols", text_color=color.olive, text_size=size.small)
+    table.cell(t, 0, 1, "S1: " + (en1 ? sym1 : "Disabled"), text_color=color.olive, text_size=size.tiny)
+    table.cell(t, 0, 2, "S2: " + (en2 ? sym2 : "Disabled"), text_color=color.olive, text_size=size.tiny)
+    table.cell(t, 0, 3, "S3: " + (en3 ? sym3 : "Disabled"), text_color=color.olive, text_size=size.tiny)
+    table.cell(t, 0, 4, "S4: " + (en4 ? sym4 : "Disabled"), text_color=color.olive, text_size=size.tiny)
