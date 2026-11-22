@@ -2,8 +2,12 @@ name: Sensibull option-chain screenshot
 
 on:
   schedule:
-    - cron: "45,55 3 * * 1-5"
-    - cron: "5,15,25,35,45,55 4-9 * * 1-5"
+    # Every 15 minutes while the Indian market is open, Monday to Friday.
+    # GitHub cron uses UTC: 03:52 UTC = 09:22 IST ... 09:52 UTC = 15:22 IST.
+    # Minutes 7/22/37/52 (not :00/:15/:30/:45) because GitHub delays or drops
+    # scheduled jobs at the busy start of each hour.
+    - cron: "52 3 * * 1-5"
+    - cron: "7,22,37,52 4-9 * * 1-5"
   workflow_dispatch:
     inputs:
       tradingsymbol:
@@ -18,7 +22,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write   # lets the job add screenshots to the sensibull-screenshots branch
 
 concurrency:
   group: sensibull-screenshot-${{ github.ref }}
@@ -28,6 +32,9 @@ jobs:
   capture:
     runs-on: windows-latest
     timeout-minutes: 15
+    env:
+      TRADING_SYMBOL: ${{ inputs.tradingsymbol || 'NIFTY' }}
+      EXPIRY_DATE: ${{ inputs.expiry || '2026-11-17' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -39,17 +46,39 @@ jobs:
         run: python -m pip install -r .\requirements.txt
         shell: pwsh
       - name: Capture option chain
-        env:
-          TRADING_SYMBOL: ${{ inputs.tradingsymbol || 'NIFTY' }}
-          EXPIRY_DATE: ${{ inputs.expiry || '2026-11-17' }}
         run: |
           $outputDir = Join-Path $env:RUNNER_TEMP "SensibullScreenshots"
           python .\Option_chain\sensibull_screenshot.py --tradingsymbol "$env:TRADING_SYMBOL" --expiry "$env:EXPIRY_DATE" --output-dir "$outputDir"
         shell: pwsh
-      - name: Save screenshot artifact
+      - name: Check out the screenshots branch
+        uses: actions/checkout@v4
+        with:
+          ref: sensibull-screenshots
+          path: shots
+      - name: Append screenshot to the screenshots branch
+        run: |
+          $source = Join-Path $env:RUNNER_TEMP "SensibullScreenshots"
+          $nowIst = (Get-Date).ToUniversalTime().AddHours(5).AddMinutes(30)
+          $target = Join-Path "shots" (Join-Path $env:TRADING_SYMBOL $nowIst.ToString("yyyy-MM-dd"))
+          New-Item -ItemType Directory -Force -Path $target | Out-Null
+          Copy-Item "$source\*.png" $target
+          Set-Location shots
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Sensibull $env:TRADING_SYMBOL $($nowIst.ToString('yyyy-MM-dd HH:mm')) IST"
+          $pushed = $false
+          foreach ($attempt in 1..4) {
+            git push origin HEAD:sensibull-screenshots
+            if ($LASTEXITCODE -eq 0) { $pushed = $true; break }
+            git pull --rebase origin sensibull-screenshots
+          }
+          if (-not $pushed) { throw "Could not push the screenshot after 4 attempts." }
+        shell: pwsh
+      - name: Keep a short-lived copy as a backup
         uses: actions/upload-artifact@v4
         with:
           name: sensibull-screenshot-${{ github.run_id }}
           path: ${{ runner.temp }}\SensibullScreenshots\*.png
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 3
