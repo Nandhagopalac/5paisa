@@ -29,6 +29,26 @@ DEFAULT_RULES = [
 ALLOWED_IMAGE_FORMATS = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp"}
 
 
+COMPACT_CSS = """
+<style>
+.block-container {padding-top: 3.2rem; padding-bottom: 1rem; max-width: 1400px;}
+h1 {font-size: 1.6rem !important; padding: 0 0 .2rem 0 !important;}
+h2, h3 {font-size: 1.15rem !important; padding: .2rem 0 .2rem 0 !important;}
+div[data-testid="stVerticalBlock"] {gap: .45rem;}
+hr {margin: .6rem 0 !important;}
+div[data-testid="stHorizontalBlock"] {gap: .5rem;}
+/* trade rows */
+div[class*="st-key-trow-"] p, div[class*="st-key-thead"] p {margin: 0; font-size: .86rem; line-height: 1.2;}
+div[class*="st-key-trow-"] {border-bottom: 1px solid #eceef2; padding: .15rem 0;}
+div[class*="st-key-trow-"] [data-testid="stHorizontalBlock"] {align-items: center;}
+div[class*="st-key-trow-"] button, div[class*="st-key-trow-"] [data-testid="stPopover"] button {
+    min-height: 1.9rem; padding: .1rem .5rem; font-size: .8rem; white-space: nowrap;}
+div[class*="st-key-thead"] {margin-top: .5rem;}
+div[class*="st-key-thead"] p {color: #6b7280; font-weight: 600; font-size: .78rem; text-transform: uppercase;}
+</style>
+"""
+
+
 def _date_text(value):
     if isinstance(value, datetime):
         value = value.date()
@@ -535,64 +555,69 @@ def show_trade_entries(selected_date):
             st.session_state["editing_trade"] = None
 
     if trades:
-        widths = [2, 1, 1, 1, 1.2, 1, 1, 1.3, 3, 1, 1.4]
-        headers = ["Instrument", "CE/PE", "Lots", "Lot size", "Quantity",
+        widths = [1.6, .7, .6, .8, .9, .8, .8, 1.2, 3.2, .8, 1.3]
+        headers = ["Instrument", "CE/PE", "Lots", "Lot size", "Qty",
                    "Buy", "Sell", "P&L", "Notes", "", ""]
-        for column, header in zip(st.columns(widths), headers):
-            column.markdown(f"**{header}**")
-        for number, trade in enumerate(trades, start=1):
+        with st.container(key="thead"):
+            for column, header in zip(st.columns(widths), headers):
+                column.markdown(header)
+        for trade in trades:
             lots, lot_size = _trade_lot_values(trade)
             pnl = trade.get("pnl")
+            pnl_color = "#15803d" if (pnl or 0) > 0 else ("#dc2626" if (pnl or 0) < 0 else "inherit")
             values = [
-                trade.get("instrument", trade.get("symbol", "")),
+                f"**{trade.get('instrument', trade.get('symbol', ''))}**",
                 trade.get("option_type", ""),
                 lots,
                 lot_size,
                 trade.get("quantity"),
                 trade.get("buy_price", trade.get("entry_price")),
                 trade.get("sell_price", trade.get("exit_price")),
-                "—" if pnl is None else f"{pnl:,.2f}",
+                "—" if pnl is None else (
+                    f"<span style='color:{pnl_color};font-weight:700'>{pnl:,.0f}</span>"),
                 trade.get("notes", ""),
             ]
-            cells = st.columns(widths)
-            for cell, value in zip(cells, values):
-                cell.write("" if value is None else value)
             is_this_row = bool(editing_trade and editing_trade.get("id") == trade["id"])
-            shot_count = len(trade.get("screenshots", []))
-            with cells[-1].popover(
-                f"📷 {shot_count}" if shot_count else "📷 Screenshot",
-                use_container_width=True,
-            ):
-                row_uploads = st.file_uploader(
-                    "Upload a screenshot for this trade",
-                    type=["png", "jpg", "jpeg", "webp"],
-                    accept_multiple_files=True,
-                    key=f"row_up_{trade_date}_{trade['id']}",
-                )
-                if st.button("Save", key=f"row_sv_{trade_date}_{trade['id']}",
-                             disabled=not row_uploads, type="primary"):
-                    for upload in row_uploads:
-                        try:
-                            save_trade_screenshot(selected_date, trade["id"],
-                                                  upload.name, upload.getvalue())
-                        except ValueError as error:
-                            st.error(f"{upload.name}: {error}")
+            with st.container(key=f"trow-{trade_date}-{trade['id']}"):
+                cells = st.columns(widths)
+                for cell, value in zip(cells, values):
+                    text = "" if value is None else (f"{value:g}" if isinstance(value, float) else str(value))
+                    cell.markdown(text, unsafe_allow_html=True)
+                shot_count = len(trade.get("screenshots", []))
+                with cells[-1].popover(
+                    f"📷 {shot_count}" if shot_count else "📷 Add",
+                    use_container_width=True,
+                ):
+                    row_uploads = st.file_uploader(
+                        "Upload a screenshot for this trade",
+                        type=["png", "jpg", "jpeg", "webp"],
+                        accept_multiple_files=True,
+                        key=f"row_up_{trade_date}_{trade['id']}",
+                    )
+                    if st.button("Save", key=f"row_sv_{trade_date}_{trade['id']}",
+                                 disabled=not row_uploads, type="primary"):
+                        for upload in row_uploads:
+                            try:
+                                save_trade_screenshot(selected_date, trade["id"],
+                                                      upload.name, upload.getvalue())
+                            except ValueError as error:
+                                st.error(f"{upload.name}: {error}")
+                        st.rerun()
+                    for shot in get_trade_screenshots(trade):
+                        if shot["path"].is_file():
+                            st.image(str(shot["path"]), caption=shot["original_name"],
+                                     use_container_width=True)
+                if cells[-2].button(
+                    "Editing" if is_this_row else "Edit",
+                    key=f"edit_row_{trade_date}_{trade['id']}",
+                    disabled=is_this_row,
+                    use_container_width=True,
+                ):
+                    st.session_state["editing_trade"] = {
+                        "date": trade_date,
+                        "id": trade["id"],
+                    }
                     st.rerun()
-                for shot in get_trade_screenshots(trade):
-                    if shot["path"].is_file():
-                        st.image(str(shot["path"]), caption=shot["original_name"],
-                                 use_container_width=True)
-            if cells[-2].button(
-                "Editing" if is_this_row else "Edit",
-                key=f"edit_row_{trade_date}_{trade['id']}",
-                disabled=is_this_row,
-                use_container_width=True,
-            ):
-                st.session_state["editing_trade"] = {
-                    "date": trade_date,
-                    "id": trade["id"],
-                }
-                st.rerun()
     else:
         st.caption("No trades recorded for this date yet.")
 
@@ -876,9 +901,8 @@ def show_daily_journal(selected_date):
 
 
 def show_trade_calendar():
-    st.title("Trade calendar")
     month = st.session_state["calendar_month"]
-    previous, month_label, following = st.columns([1, 3, 1])
+    previous, month_label, following = st.columns([1, 6, 1])
     previous.button(
         "‹",
         help="Previous month",
@@ -886,7 +910,7 @@ def show_trade_calendar():
         args=(-1,),
         use_container_width=True,
     )
-    month_label.markdown(f"### {month:%B %Y}")
+    month_label.markdown(f"<div style='text-align:center;font-size:1.15rem;font-weight:700;padding-top:.3rem'>Trade calendar · {month:%B %Y}</div>", unsafe_allow_html=True)
     following.button(
         "›",
         help="Next month",
@@ -901,11 +925,14 @@ def show_trade_calendar():
         """
         <style>
         div[class*="st-key-calendar-"] button {
-            height: 108px;
+            height: 54px;
+            min-height: 54px;
             width: 100%;
             white-space: pre-line;
-            line-height: 1.55;
-            margin-bottom: 8px;
+            line-height: 1.25;
+            font-size: .78rem;
+            padding: .15rem .25rem;
+            margin: 0;
         }
         div[class*="st-key-calendar-profit"] button {
             background: #4caf50 !important;
@@ -953,12 +980,13 @@ def show_trade_calendar():
             tone = "profit" if pnl is not None and pnl > 0 else (
                 "loss" if pnl is not None and pnl < 0 else "flat"
             )
-            pnl_text = f"{pnl:,.2f}" if pnl is not None else "P&L —"
+            pnl_text = f"{pnl:,.0f}" if pnl is not None else "—"
             plural = "" if trade_count == 1 else "s"
             selected = "-selected" if day == selected_date else ""
             with column.container(key=f"calendar-{tone}{selected}-{trade_date}"):
                 st.button(
-                    f"{day_number}\n{pnl_text}\n{trade_count} trade{plural}",
+                    (f"{day_number}\n{pnl_text}\n{trade_count} trade{plural}"
+                     if trade_count else f"{day_number}\n\n"),
                     key=f"calendar-day-{trade_date}",
                     on_click=select_calendar_day,
                     args=(trade_date,),
@@ -1023,6 +1051,7 @@ def main():
         layout="wide",
     )
     initialize_storage()
+    st.markdown(COMPACT_CSS, unsafe_allow_html=True)
     st.session_state.setdefault("calendar_month", date.today().replace(day=1))
     st.session_state.setdefault("selected_trade_date", date.today())
 
