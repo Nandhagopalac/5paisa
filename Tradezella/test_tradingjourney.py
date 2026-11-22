@@ -7,21 +7,24 @@ from pathlib import Path
 from PIL import Image
 
 from Tradezella.tradingjourney import (
+    add_rule,
     calculate_trade_pnl,
+    create_strategy,
+    delete_rule,
+    get_rule_stats,
+    get_strategies,
+    get_strategy_overview,
+    rename_rule,
+    set_strategy_archived,
     delete_trade,
-    get_day_rule_matrix,
-    get_rule_adherence,
     default_lot_size,
     get_journal,
     get_month_activity,
-    get_rules,
-    get_rules_summary,
     get_trade_screenshots,
     get_screenshots,
     get_trades,
     initialize_storage,
     save_journal,
-    save_rules,
     save_screenshot,
     save_trade_journal,
     save_trade_screenshot,
@@ -111,17 +114,37 @@ class TradingJournalTests(unittest.TestCase):
                 data_dir=self.data_dir,
             )
 
-    def test_rules_are_saved_and_empty_rule_list_is_rejected(self):
-        save_rules(
-            ["My 1:1:1 definition", " ", "No unplanned trades"], self.data_dir
-        )
+    def test_default_strategy_has_the_three_rule_groups(self):
+        strategy = get_strategies(self.data_dir)[0]
+        self.assertEqual(strategy["name"], "Trendline break reversal")
+        self.assertEqual(len(strategy["rules"]["entry"]), 5)
+        self.assertEqual(len(strategy["rules"]["market"]), 1)
+        self.assertEqual(len(strategy["rules"]["exit"]), 1)
 
-        self.assertEqual(
-            get_rules(self.data_dir),
-            ["My 1:1:1 definition", "No unplanned trades"],
-        )
+    def test_strategy_and_rule_editing(self):
+        sid = create_strategy("Break & retest", self.data_dir)
         with self.assertRaises(ValueError):
-            save_rules([" ", ""], self.data_dir)
+            create_strategy("break & RETEST", self.data_dir)
+        rule_id = add_rule(sid, "entry", " Wait for the retest ", self.data_dir)
+        rename_rule(sid, rule_id, "Wait for a clean retest", self.data_dir)
+        strategy = next(x for x in get_strategies(self.data_dir) if x["id"] == sid)
+        self.assertEqual(strategy["rules"]["entry"][0]["text"], "Wait for a clean retest")
+        with self.assertRaises(ValueError):
+            add_rule(sid, "entry", "  ", self.data_dir)
+        with self.assertRaises(ValueError):
+            rename_rule(sid, rule_id, "", self.data_dir)
+        delete_rule(sid, rule_id, self.data_dir)
+        strategy = next(x for x in get_strategies(self.data_dir) if x["id"] == sid)
+        self.assertEqual(strategy["rules"]["entry"], [])
+
+    def test_last_active_strategy_cannot_be_archived(self):
+        first = get_strategies(self.data_dir)[0]["id"]
+        with self.assertRaises(ValueError):
+            set_strategy_archived(first, True, self.data_dir)
+        second = create_strategy("Second", self.data_dir)
+        set_strategy_archived(second, True, self.data_dir)
+        self.assertEqual(len(get_strategies(self.data_dir)), 1)
+        self.assertEqual(len(get_strategies(self.data_dir, include_archived=True)), 2)
 
     def test_screenshot_is_saved_under_local_data_directory(self):
         buffer = BytesIO()
@@ -164,15 +187,16 @@ class TradingJournalTests(unittest.TestCase):
     def test_trade_journal_survives_trade_edit_and_counts_rules(self):
         d = date(2026, 11, 22)
         tid = save_trade(d, "NIFTY", "CE", 6, 480, 510, data_dir=self.data_dir)
-        rules = get_rules(self.data_dir)
+        strategy = get_strategies(self.data_dir)[0]
+        every_rule = [r["id"] for rules in strategy["rules"].values() for r in rules]
         save_trade_journal(d, tid, mood_before="Calm", thinking="Waited for retest",
-                           rules_followed=rules, data_dir=self.data_dir)
+                           rules_followed=every_rule, data_dir=self.data_dir)
         update_trade(d, tid, "NIFTY", "CE", 6, 480, 520, "edited", data_dir=self.data_dir)
         trade = get_trades(d, self.data_dir)[0]
         self.assertEqual(trade["journal"]["thinking"], "Waited for retest")
         self.assertEqual(trade["pnl"], 15600.0)
-        row = get_rules_summary(2026, 11, self.data_dir)[0]
-        self.assertEqual((row["Trades"], row["Followed all rules"], row["Broke a rule"]), (1, 1, 0))
+        stats = get_rule_stats(strategy["id"], 2026, 11, self.data_dir)
+        self.assertTrue(all(r["follow_rate"] == 100 for g in stats for r in g["rules"]))
 
     def test_trade_screenshot_saved_on_the_trade(self):
         d = date(2026, 11, 22)
@@ -205,17 +229,31 @@ class TradingJournalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             delete_trade(d, gone, data_dir=self.data_dir)
 
-    def test_rule_adherence_and_day_matrix(self):
+    def test_strategy_overview_and_rule_stats(self):
         d = date(2026, 11, 22)
-        rules = get_rules(self.data_dir)
-        a = save_trade(d, "NIFTY", "CE", 1, 100, 110, data_dir=self.data_dir)
-        b = save_trade(d, "NIFTY", "PE", 1, 100, 90, data_dir=self.data_dir)
-        save_trade_journal(d, a, rules_followed=rules, data_dir=self.data_dir)
-        save_trade_journal(d, b, rules_followed=rules[1:], data_dir=self.data_dir)
-        first = get_rule_adherence(2026, 11, self.data_dir)[0]
-        self.assertEqual((first["Followed"], first["Skipped"], first["Followed %"]), (1, 1, 50.0))
-        matrix = get_day_rule_matrix(d, self.data_dir)
-        self.assertEqual((matrix[0][rules[0]], matrix[1][rules[0]], matrix[1][rules[1]]), ("✓", "✗", "✓"))
+        first = get_strategies(self.data_dir)[0]
+        other = create_strategy("Other", self.data_dir)
+        win = save_trade(d, "NIFTY", "CE", 1, 100, 110, strategy_id=first["id"], data_dir=self.data_dir)
+        loss = save_trade(d, "NIFTY", "PE", 1, 100, 90, strategy_id=first["id"], data_dir=self.data_dir)
+        save_trade(d, "NIFTY", "PE", 1, 100, 120, strategy_id=other, data_dir=self.data_dir)
+        old = save_trade(d, "NIFTY", "CE", 1, 100, 100, data_dir=self.data_dir)  # default strategy
+        retest = first["rules"]["entry"][1]["id"]
+        save_trade_journal(d, win, rules_followed=[retest], data_dir=self.data_dir)
+        save_trade_journal(d, loss, rules_followed=[], data_dir=self.data_dir)
+
+        overview = {r["name"]: r for r in get_strategy_overview(data_dir=self.data_dir)}
+        mine = overview["Trendline break reversal"]
+        self.assertEqual(mine["trades"], 3)
+        self.assertAlmostEqual(mine["win_rate"], 100 / 3)
+        self.assertEqual(overview["Other"]["net_pnl"], 20 * 65)
+        self.assertEqual(get_strategy_overview(2026, 10, self.data_dir)[0]["trades"], 0)
+
+        stats = get_rule_stats(first["id"], data_dir=self.data_dir)
+        rule = next(r for g in stats for r in g["rules"] if r["id"] == retest)
+        self.assertEqual((rule["journalled"], rule["followed"], rule["follow_rate"]), (2, 1, 50))
+        self.assertEqual(rule["net_pnl"], 650)
+        self.assertEqual(rule["profit_factor"], float("inf"))
+        self.assertEqual(rule["win_rate"], 100)
 
 
 if __name__ == "__main__":

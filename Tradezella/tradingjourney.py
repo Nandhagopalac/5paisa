@@ -19,7 +19,12 @@ JOURNALS_DIR = DATA_DIR / "journals"
 SCREENSHOTS_DIR = DATA_DIR / "screenshots"
 SETTINGS_PATH = DATA_DIR / "settings.json"
 MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024
-DEFAULT_RULES = [
+RULE_GROUPS = (
+    ("market", "Market conditions"),
+    ("entry", "Entry rules"),
+    ("exit", "Exit rules"),
+)
+LEGACY_DEFAULT_RULES = [
     "1:1:1 rule (write your own definition)",
     "Trade only my planned setups",
     "Record my trade rationale",
@@ -50,6 +55,14 @@ div[class*="st-key-edit-trade-panel"] {border: 2px solid #ea580c; border-radius:
 div[class*="st-key-edit-trade-panel"] summary p {font-weight: 800; color: #c2410c; letter-spacing: .04em;}
 div[class*="st-key-add-trade-panel"] summary p {font-weight: 700; color: #15803d;}
 div[class*="st-key-delete-confirm"] {border: 2px solid #dc2626; background: #fef2f2; border-radius: 8px; padding: .5rem .8rem;}
+div[class*="st-key-rrow-"] {border-bottom: 1px solid #eceef2; padding: .1rem .2rem;}
+div[class*="st-key-rrow-"] [data-testid="stHorizontalBlock"] {align-items: stretch;}
+div[class*="st-key-rrow-"] p {margin: 0; font-size: .86rem;}
+div[class*="st-key-rrow-"] input {min-height: 2rem; padding: .2rem .6rem; font-weight: 600;}
+div[class*="st-key-rrow-"] button {min-height: 1.9rem; padding: .1rem .4rem;}
+div[class*="st-key-thead-rules"] {padding: 0 .2rem .35rem .2rem; min-height: 1.5rem;}
+div[class*="st-key-rrow-"] [data-testid="stColumn"] {justify-content: center;}
+div[class*="st-key-rules-panel"] {border: 2px solid #7656c9; border-radius: 10px; padding: .6rem .9rem; background: #faf8ff;}
 div[class*="st-key-thead"] {margin-top: .5rem; padding: 0 .4rem 0 calc(4px + .4rem);}
 div[class*="st-key-thead"] p {color: #6b7280; font-weight: 600; font-size: .78rem; text-transform: uppercase;}
 </style>
@@ -96,30 +109,145 @@ def _empty_journal(trade_date):
     }
 
 
+def _new_id():
+    return uuid.uuid4().hex[:8]
+
+
+def _new_rule(text):
+    return {"id": _new_id(), "text": text.strip()}
+
+
+def _default_strategy():
+    return {
+        "id": _new_id(),
+        "name": "Trendline break reversal",
+        "archived": False,
+        "rules": {
+            "market": [_new_rule("Trending market")],
+            "entry": [
+                _new_rule("A+ setup: trendline has 3+ touchpoints"),
+                _new_rule("Price has broken the trendline"),
+                _new_rule("Price pulled back and retested"),
+                _new_rule("Candle has closed"),
+                _new_rule("Top 5 Nifty stocks agree (green / red)"),
+            ],
+            "exit": [_new_rule("S/R hit or safety line crossed")],
+        },
+    }
+
+
+def _load_settings(data_dir):
+    path = Path(data_dir) / "settings.json"
+    settings = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    strategies = settings.get("strategies")
+    if not isinstance(strategies, list) or not strategies:
+        strategy = _default_strategy()
+        old_rules = settings.get("rules")
+        if isinstance(old_rules, list):
+            strategy["rules"]["entry"] += [
+                _new_rule(rule) for rule in old_rules
+                if isinstance(rule, str) and rule.strip() and rule not in LEGACY_DEFAULT_RULES
+            ]
+        settings = {"strategies": [strategy]}
+        _write_json(path, settings)
+    return settings
+
+
 def initialize_storage(data_dir=DATA_DIR):
     data_dir = Path(data_dir)
     (data_dir / "journals").mkdir(parents=True, exist_ok=True)
     (data_dir / "screenshots").mkdir(parents=True, exist_ok=True)
-    settings_path = data_dir / "settings.json"
-    if not settings_path.exists():
-        _write_json(settings_path, {"rules": DEFAULT_RULES})
+    _load_settings(data_dir)
 
 
-def get_rules(data_dir=DATA_DIR):
+def get_strategies(data_dir=DATA_DIR, include_archived=False):
     initialize_storage(data_dir)
-    settings = json.loads((Path(data_dir) / "settings.json").read_text(encoding="utf-8"))
-    rules = settings.get("rules")
-    if not isinstance(rules, list) or not all(isinstance(rule, str) for rule in rules):
-        raise ValueError("The local settings file contains invalid daily rules.")
-    return rules
+    strategies = _load_settings(data_dir)["strategies"]
+    return [s for s in strategies if include_archived or not s.get("archived")]
 
 
-def save_rules(rules, data_dir=DATA_DIR):
-    cleaned_rules = [rule.strip() for rule in rules if rule.strip()]
-    if not cleaned_rules:
-        raise ValueError("Add at least one daily rule.")
+def _save_strategies(strategies, data_dir):
+    _write_json(Path(data_dir) / "settings.json", {"strategies": strategies})
+
+
+def _edit_strategy(strategy_id, data_dir, change):
     initialize_storage(data_dir)
-    _write_json(Path(data_dir) / "settings.json", {"rules": cleaned_rules})
+    strategies = _load_settings(data_dir)["strategies"]
+    strategy = next((s for s in strategies if s["id"] == strategy_id), None)
+    if strategy is None:
+        raise ValueError("That strategy no longer exists.")
+    result = change(strategy, strategies)
+    _save_strategies(strategies, data_dir)
+    return result
+
+
+def create_strategy(name, data_dir=DATA_DIR):
+    name = name.strip()
+    if not name:
+        raise ValueError("Give the strategy a name.")
+    initialize_storage(data_dir)
+    strategies = _load_settings(data_dir)["strategies"]
+    if any(s["name"].lower() == name.lower() for s in strategies):
+        raise ValueError("A strategy with that name already exists.")
+    strategy = {"id": _new_id(), "name": name, "archived": False,
+                "rules": {key: [] for key, _ in RULE_GROUPS}}
+    strategies.append(strategy)
+    _save_strategies(strategies, data_dir)
+    return strategy["id"]
+
+
+def set_strategy_archived(strategy_id, archived, data_dir=DATA_DIR):
+    def change(strategy, strategies):
+        others = [s for s in strategies if s["id"] != strategy_id and not s.get("archived")]
+        if archived and not others:
+            raise ValueError("Keep at least one active strategy.")
+        strategy["archived"] = bool(archived)
+    _edit_strategy(strategy_id, data_dir, change)
+
+
+def add_rule(strategy_id, group, text, data_dir=DATA_DIR):
+    if group not in dict(RULE_GROUPS):
+        raise ValueError("Unknown rule group.")
+    if not text.strip():
+        raise ValueError("Type the rule first.")
+
+    def change(strategy, _):
+        rule = _new_rule(text)
+        strategy["rules"].setdefault(group, []).append(rule)
+        return rule["id"]
+    return _edit_strategy(strategy_id, data_dir, change)
+
+
+def rename_rule(strategy_id, rule_id, text, data_dir=DATA_DIR):
+    if not text.strip():
+        raise ValueError("A rule cannot be empty. Use the bin to remove it.")
+
+    def change(strategy, _):
+        for rules in strategy["rules"].values():
+            for rule in rules:
+                if rule["id"] == rule_id:
+                    rule["text"] = text.strip()
+                    return
+        raise ValueError("That rule no longer exists.")
+    _edit_strategy(strategy_id, data_dir, change)
+
+
+def delete_rule(strategy_id, rule_id, data_dir=DATA_DIR):
+    def change(strategy, _):
+        for group, rules in strategy["rules"].items():
+            strategy["rules"][group] = [r for r in rules if r["id"] != rule_id]
+    _edit_strategy(strategy_id, data_dir, change)
+
+
+def rule_followed(entry, rule):
+    ticked = (entry or {}).get("rules_followed", [])
+    return rule["id"] in ticked or rule["text"] in ticked
+
+
+def trade_strategy_id(trade, strategies):
+    """The trade's strategy; older trades without one belong to the first strategy."""
+    ids = {s["id"] for s in strategies}
+    return trade.get("strategy_id") if trade.get("strategy_id") in ids else strategies[0]["id"]
 
 
 def get_journal(trade_date, data_dir=DATA_DIR):
@@ -161,10 +289,12 @@ def save_trade(
     buy_price,
     sell_price,
     notes="",
+    strategy_id=None,
     data_dir=DATA_DIR,
 ):
     trade = {
         "id": uuid.uuid4().hex,
+        "strategy_id": strategy_id or get_strategies(data_dir)[0]["id"],
         **_trade_details(instrument, option_type, lots, buy_price, sell_price, notes),
     }
     _append_trade(trade_date, trade, data_dir)
@@ -180,6 +310,7 @@ def update_trade(
     buy_price,
     sell_price,
     notes="",
+    strategy_id=None,
     data_dir=DATA_DIR,
 ):
     journal = get_journal(trade_date, data_dir)
@@ -190,6 +321,7 @@ def update_trade(
             journal["trades"][index] = {
                 **trade,
                 "id": trade_id,
+                **({"strategy_id": strategy_id} if strategy_id else {}),
                 **_trade_details(instrument, option_type, lots, buy_price, sell_price, notes),
             }
             journal["updated_at"] = datetime.now().isoformat(timespec="seconds")
@@ -382,89 +514,75 @@ def get_trade_screenshots(trade, data_dir=DATA_DIR):
     ]
 
 
-def _month_journals(year, month, data_dir):
-    month_start = date(year, month, 1)
-    month_end = date(year, month, calendar.monthrange(year, month)[1])
+def _iter_trades(data_dir, year=None, month=None):
     initialize_storage(data_dir)
     for path in sorted((Path(data_dir) / "journals").glob("*.json")):
         trade_date = date.fromisoformat(path.stem)
-        if month_start <= trade_date <= month_end:
-            yield trade_date, json.loads(path.read_text(encoding="utf-8"))
-
-
-def get_rules_summary(year, month, data_dir=DATA_DIR):
-    """Per day: trades taken, trades journalled, trades with every rule followed."""
-    rules = get_rules(data_dir)
-    rows = []
-    for trade_date, journal in _month_journals(year, month, data_dir):
-        trades = journal.get("trades", [])
-        if not trades:
+        if year and (trade_date.year, trade_date.month) != (year, month):
             continue
-        journalled = [t for t in trades if t.get("journal")]
-        followed_all = sum(
-            1 for t in journalled
-            if all(rule in t["journal"].get("rules_followed", []) for rule in rules)
-        )
-        rows.append(
-            {
-                "Date": trade_date.isoformat(),
-                "Trades": len(trades),
-                "Journalled": len(journalled),
-                "Followed all rules": followed_all,
-                "Broke a rule": len(journalled) - followed_all,
-                "P&L": sum(t.get("pnl") or 0 for t in trades),
-            }
-        )
-    return rows
+        for trade in json.loads(path.read_text(encoding="utf-8")).get("trades", []):
+            yield trade_date, trade
 
 
-def get_rule_adherence(year, month, data_dir=DATA_DIR):
-    """For each rule: how often it was followed across the month's journalled trades."""
-    rules = get_rules(data_dir)
-    counts = {rule: [0, 0, 0.0, 0.0] for rule in rules}
-    for _, journal in _month_journals(year, month, data_dir):
-        for trade in journal.get("trades", []):
-            entry = trade.get("journal")
-            if not entry:
-                continue
-            for rule in rules:
-                if rule in entry.get("rules_followed", []):
-                    counts[rule][0] += 1
-                    counts[rule][2] += trade.get("pnl") or 0
-                else:
-                    counts[rule][1] += 1
-                    counts[rule][3] += trade.get("pnl") or 0
-    rows = []
-    for rule, (yes, no, pnl_yes, pnl_no) in counts.items():
-        total = yes + no
-        rows.append(
-            {
-                "Rule": rule,
-                "Followed": yes,
-                "Skipped": no,
-                "Followed %": (yes / total * 100) if total else None,
-                "P&L when followed": pnl_yes,
-                "P&L when skipped": pnl_no,
-            }
-        )
-    return rows
+def _performance(pnls):
+    pnls = [p for p in pnls if p is not None]
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p < 0]
+    gross_loss = -sum(losses)
+    if gross_loss:
+        profit_factor = sum(wins) / gross_loss
+    else:
+        profit_factor = float("inf") if wins else None
+    return {
+        "trades": len(pnls),
+        "win_rate": len(wins) / len(pnls) * 100 if pnls else None,
+        "net_pnl": sum(pnls),
+        "profit_factor": profit_factor,
+        "avg_win": sum(wins) / len(wins) if wins else None,
+        "avg_loss": sum(losses) / len(losses) if losses else None,
+    }
 
 
-def get_day_rule_matrix(trade_date, data_dir=DATA_DIR):
-    """One row per trade with a tick or cross for each rule."""
-    rules = get_rules(data_dir)
-    rows = []
-    for number, trade in enumerate(get_trades(trade_date, data_dir), start=1):
-        entry = trade.get("journal")
-        row = {
-            "#": number,
-            "Trade": f"{trade.get('instrument', '')} {trade.get('option_type', '')}".strip(),
-            "P&L": trade.get("pnl"),
-        }
-        for rule in rules:
-            row[rule] = "—" if not entry else ("✓" if rule in entry.get("rules_followed", []) else "✗")
-        rows.append(row)
-    return rows
+def get_strategy_overview(year=None, month=None, data_dir=DATA_DIR, include_archived=False):
+    """One performance row per strategy (all time, or one month)."""
+    everything = get_strategies(data_dir, include_archived=True)
+    pnls = {s["id"]: [] for s in everything}
+    journalled = {s["id"]: 0 for s in everything}
+    for _, trade in _iter_trades(data_dir, year, month):
+        sid = trade_strategy_id(trade, everything)
+        pnls[sid].append(trade.get("pnl"))
+        journalled[sid] += 1 if trade.get("journal") else 0
+    return [
+        {"id": s["id"], "name": s["name"], "archived": bool(s.get("archived")),
+         "journalled": journalled[s["id"]], **_performance(pnls[s["id"]])}
+        for s in everything if include_archived or not s.get("archived")
+    ]
+
+
+def get_rule_stats(strategy_id, year=None, month=None, data_dir=DATA_DIR):
+    """For each rule of a strategy: follow rate, net P&L, profit factor, win rate."""
+    everything = get_strategies(data_dir, include_archived=True)
+    strategy = next(s for s in everything if s["id"] == strategy_id)
+    journalled = [
+        trade for _, trade in _iter_trades(data_dir, year, month)
+        if trade_strategy_id(trade, everything) == strategy_id and trade.get("journal")
+    ]
+    groups = []
+    for key, label in RULE_GROUPS:
+        rules = []
+        for rule in strategy["rules"].get(key, []):
+            followed = [t for t in journalled if rule_followed(t["journal"], rule)]
+            performance = _performance([t.get("pnl") for t in followed])
+            rules.append({
+                "id": rule["id"], "text": rule["text"],
+                "journalled": len(journalled), "followed": len(followed),
+                "follow_rate": len(followed) / len(journalled) * 100 if journalled else None,
+                "net_pnl": performance["net_pnl"] if followed else None,
+                "profit_factor": performance["profit_factor"],
+                "win_rate": performance["win_rate"],
+            })
+        groups.append({"key": key, "label": label, "rules": rules})
+    return groups
 
 
 def get_screenshots(trade_date, data_dir=DATA_DIR):
@@ -580,6 +698,7 @@ def submit_trade_entry(trade_date, trade_id=None):
     option_type = st.session_state[
         _trade_input_key("option_type", trade_date, trade_id)
     ]
+    strategy_id = st.session_state.get(_trade_input_key("strategy", trade_date, trade_id))
     notes = ""
     if trade_id:
         notes = next(
@@ -596,6 +715,7 @@ def submit_trade_entry(trade_date, trade_id=None):
                 buy_price,
                 sell_price,
                 notes,
+                strategy_id,
             )
         else:
             new_id = save_trade(
@@ -606,6 +726,7 @@ def submit_trade_entry(trade_date, trade_id=None):
                 buy_price,
                 sell_price,
                 notes,
+                strategy_id,
             )
             choose_trade(trade_date, new_id)
     except ValueError as error:
@@ -778,6 +899,12 @@ def show_trade_entries(selected_date):
     if lots_default is not None:
         lots_default = max(1, round(lots_default))
     editing_option = editing_trade.get("option_type", "CE") if is_editing else "CE"
+    all_strategies = get_strategies(include_archived=True)
+    strategy_names = {x["id"]: x["name"] for x in all_strategies}
+    own_strategy = trade_strategy_id(editing_trade, all_strategies) if is_editing else None
+    strategy_options = [x["id"] for x in all_strategies
+                        if not x.get("archived") or x["id"] == own_strategy]
+    strategy_index = strategy_options.index(own_strategy) if own_strategy in strategy_options else 0
     editing_buy = (
         editing_trade.get("buy_price", editing_trade.get("entry_price"))
         if is_editing else None
@@ -793,7 +920,14 @@ def show_trade_entries(selected_date):
         expanded=is_editing or not trades,
     ):
         with st.form(f"trade_form_{trade_date}_{form_id}", clear_on_submit=not is_editing):
-            instrument_column, option_column, lots_column = st.columns([2, 1, 1])
+            instrument_column, option_column, lots_column, strategy_column = st.columns([2, 1, 1, 2])
+            strategy_column.selectbox(
+                "Strategy",
+                strategy_options,
+                index=strategy_index,
+                format_func=lambda sid: strategy_names[sid],
+                key=form_key("strategy"),
+            )
             instrument_column.text_input(
                 "Instrument",
                 placeholder="e.g. NIFTY 24500",
@@ -855,19 +989,22 @@ def show_trade_journals(selected_date):
     trades = get_trades(selected_date)
     if not trades:
         return
-    rules = get_rules()
+    all_strategies = get_strategies(include_archived=True)
     trade_date = selected_date.isoformat()
     chosen_id = current_trade_id(trades, trade_date)
     number, trade = next((n, t) for n, t in enumerate(trades, start=1) if t["id"] == chosen_id)
     saved = trade.get("journal") or {}
-    followed = set(saved.get("rules_followed", []))
+    strategy = next(x for x in all_strategies if x["id"] == trade_strategy_id(trade, all_strategies))
+    rule_list = [(label, rule) for key, label in RULE_GROUPS
+                 for rule in strategy["rules"].get(key, [])]
     pnl = trade.get("pnl") or 0
-    status = (f"{len(followed & set(rules))}/{len(rules)} rules followed"
-              if saved else "not journalled yet")
+    done = sum(1 for _, rule in rule_list if rule_followed(saved, rule))
+    status = (f"{done}/{len(rule_list)} rules followed" if saved else "not journalled yet")
     with st.container(key="journal-panel"):
         st.markdown(
             f"**Journal · Trade {number} · {trade.get('instrument', '')} "
-            f"{trade.get('option_type', '')} · P&L {pnl:,.0f}** &nbsp;·&nbsp; {status}"
+            f"{trade.get('option_type', '')} · P&L {pnl:,.0f}** &nbsp;·&nbsp; "
+            f"{strategy['name']} &nbsp;·&nbsp; {status}"
         )
         key = f"{trade_date}_{trade['id']}"
         with st.form(f"trade_journal_{key}"):
@@ -886,20 +1023,28 @@ def show_trade_journals(selected_date):
                                     height=90, key=f"th_{key}")
             improve = st.text_area("What I would do differently",
                                    value=saved.get("improve", ""), height=90, key=f"im_{key}")
-            st.markdown("**Rules I followed on this trade**")
             ticks = {}
-            rule_columns = st.columns(2)
-            for index, rule in enumerate(rules):
-                suffix = hashlib.sha1(rule.encode("utf-8")).hexdigest()[:8]
-                ticks[rule] = rule_columns[index % 2].checkbox(
-                    rule, value=rule in followed, key=f"rl_{key}_{index}_{suffix}")
+            if rule_list:
+                st.markdown("**Rules I followed on this trade**")
+                for key_name, label in RULE_GROUPS:
+                    group_rules = strategy["rules"].get(key_name, [])
+                    if not group_rules:
+                        continue
+                    st.caption(label)
+                    rule_columns = st.columns(2)
+                    for index, rule in enumerate(group_rules):
+                        ticks[rule["id"]] = rule_columns[index % 2].checkbox(
+                            rule["text"], value=rule_followed(saved, rule),
+                            key=f"rl_{key}_{rule['id']}")
+            else:
+                st.caption("This strategy has no rules yet. Add them on the Strategies page.")
             if st.form_submit_button("Save trade journal", type="primary"):
                 save_trade_journal(
                     selected_date, trade["id"],
                     mood_before="" if mood_before == "Not recorded" else mood_before,
                     mood_after="" if mood_after == "Not recorded" else mood_after,
                     thinking=thinking, improve=improve,
-                    rules_followed=[r for r, on in ticks.items() if on],
+                    rules_followed=[rule_id for rule_id, on in ticks.items() if on],
                 )
                 st.rerun()
 
@@ -1124,133 +1269,165 @@ def show_trade_calendar():
 
     show_trade_entries(selected_date)
     show_trade_journals(selected_date)
+    with st.expander("📝 Day plan & review"):
+        show_daily_journal(selected_date)
 
 
-def _rules_tone(row):
-    if not row:
-        return "flat"
-    if row["Broke a rule"]:
-        return "bad"
-    if row["Journalled"] < row["Trades"]:
-        return "pending"
-    return "ok"
+def _money(value):
+    return "—" if value is None else f"{value:,.0f}"
 
 
-def show_rules():
-    month = st.session_state["calendar_month"]
-    selected = st.session_state["selected_trade_date"]
-    summary = get_rules_summary(month.year, month.month)
-    by_date = {row["Date"]: row for row in summary}
+def _percent(value):
+    return "—" if value is None else f"{value:.0f}%"
 
-    previous, label, following = st.columns([1, 6, 1])
-    previous.button("‹", key="rules_prev", help="Previous month",
-                    on_click=shift_calendar_month, args=(-1,), use_container_width=True)
-    label.markdown(
-        f"<div style='text-align:center;font-size:1.15rem;font-weight:700;padding-top:.3rem'>"
-        f"Rules calendar · {month:%B %Y}</div>", unsafe_allow_html=True)
-    following.button("›", key="rules_next", help="Next month",
-                     on_click=shift_calendar_month, args=(1,), use_container_width=True)
 
-    total = sum(row["Trades"] for row in summary)
-    journalled = sum(row["Journalled"] for row in summary)
-    followed = sum(row["Followed all rules"] for row in summary)
-    metrics = st.columns(5)
-    metrics[0].metric("Trades", total)
-    metrics[1].metric("Journalled", f"{journalled}/{total}")
-    metrics[2].metric("Followed all rules", followed)
-    metrics[3].metric("Discipline", f"{followed / journalled * 100:.0f}%" if journalled else "—")
-    metrics[4].metric("P&L", f"{sum(row['P&L'] for row in summary):,.0f}")
+def _factor(value):
+    if value is None:
+        return "—"
+    return "∞" if value == float("inf") else f"{value:.2f}"
 
-    calendar_tab, day_tab, rules_tab = st.tabs(
-        ["📅 Rules calendar", "📝 Day plan & review", "⚙️ My rules"])
 
-    with calendar_tab:
-        st.markdown(
-            """
-            <style>
-            div[class*="st-key-rcal-"] button {height: 50px; min-height: 50px; width: 100%;
-                white-space: pre-line; line-height: 1.25; font-size: .78rem; padding: .1rem .2rem; margin: 0;}
-            div[class*="st-key-rcal-ok"] button {background: #4caf50 !important; border-color: #4caf50 !important; color: #fff !important;}
-            div[class*="st-key-rcal-bad"] button {background: #e3444b !important; border-color: #e3444b !important; color: #fff !important;}
-            div[class*="st-key-rcal-pending"] button {background: #f59e0b !important; border-color: #f59e0b !important; color: #fff !important;}
-            div[class*="st-key-rcal-"][class*="-selected-"] button {outline: 3px solid #7656c9; outline-offset: 1px;}
-            </style>
-            """, unsafe_allow_html=True)
-        st.caption("🟩 all rules followed   🟥 a rule was broken   🟧 trades not journalled yet   "
-                   "⬜ no trades.  Click a day to see it below.")
-        for column, weekday in zip(st.columns(7), ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")):
-            column.markdown(f"**{weekday}**")
-        for week in calendar.Calendar(firstweekday=calendar.MONDAY).monthdayscalendar(month.year, month.month):
-            for column, day_number in zip(st.columns(7), week):
-                if day_number == 0:
-                    continue
-                day = date(month.year, month.month, day_number)
-                row = by_date.get(day.isoformat())
-                tone = _rules_tone(row)
-                text = f"{day_number}\n"
-                if row:
-                    text += f"{row['Followed all rules']}/{row['Trades']} ✓"
-                chosen = "-selected" if day == selected else ""
-                with column.container(key=f"rcal-{tone}{chosen}-{day.isoformat()}"):
-                    st.button(text, key=f"rcal-day-{day.isoformat()}",
-                              on_click=select_calendar_day, args=(day.isoformat(),),
-                              use_container_width=True)
+def _coloured(value):
+    if value is None:
+        return "—"
+    colour = "#15803d" if value > 0 else ("#dc2626" if value < 0 else "inherit")
+    return f"<span style='color:{colour};font-weight:700'>{value:,.0f}</span>"
 
-        left, right = st.columns([3, 2])
-        with left:
-            st.markdown(f"**{selected:%d %b %Y}: rule by rule, every trade**")
-            matrix = get_day_rule_matrix(selected)
-            if matrix:
-                st.dataframe(matrix, hide_index=True, use_container_width=True)
-                st.caption("✓ followed   ✗ skipped   — trade not journalled yet")
-            else:
-                st.caption("No trades on this day.")
-        with right:
-            st.markdown("**Which rules do I break most?**")
-            adherence = get_rule_adherence(month.year, month.month)
-            if any(item["Followed"] + item["Skipped"] for item in adherence):
-                st.dataframe(
-                    [{"Rule": i["Rule"], "Followed %": i["Followed %"],
-                      "P&L followed": i["P&L when followed"],
-                      "P&L skipped": i["P&L when skipped"]} for i in adherence],
-                    hide_index=True, use_container_width=True,
-                    column_config={
-                        "Followed %": st.column_config.ProgressColumn(
-                            "Followed %", min_value=0, max_value=100, format="%.0f%%"),
-                        "P&L followed": st.column_config.NumberColumn(format="%.0f"),
-                        "P&L skipped": st.column_config.NumberColumn(format="%.0f"),
-                    })
-            else:
-                st.caption("Journal a trade and tick its rules to see this.")
 
-    with day_tab:
-        picked = st.date_input("Day", value=selected)
-        if picked != selected:
-            st.session_state["selected_trade_date"] = picked
-            st.session_state["selected_trade"] = None
-        show_daily_journal(picked)
+def _strategy_action(action, *args):
+    try:
+        action(*args)
+    except ValueError as error:
+        st.session_state["strategy_error"] = str(error)
 
-    with rules_tab:
-        st.info(
-            "These rules appear as checkboxes in every trade journal. "
-            "The 1:1:1 rule is included as a reminder; add your own definition here."
-        )
-        rules = get_rules()
-        with st.form("rules_form"):
-            text = st.text_area(
-                "One rule per line",
-                value="\n".join(rules),
-                height=240,
-                help="Remove a line to remove that rule from future checklists.",
-            )
-            if st.form_submit_button("Save rules", type="primary"):
+
+def _rename_rule_from_input(strategy_id, rule_id):
+    _strategy_action(rename_rule, strategy_id, rule_id,
+                     st.session_state.get(f"rule_text_{rule_id}", ""))
+
+
+def _add_rule_from_input(strategy_id, group):
+    key = f"new_rule_{strategy_id}_{group}"
+    _strategy_action(add_rule, strategy_id, group, st.session_state.get(key, ""))
+    st.session_state[key] = ""
+
+
+def _choose_strategy(strategy_id):
+    st.session_state["selected_strategy"] = strategy_id
+
+
+def show_strategies():
+    today = date.today()
+    title, period_box = st.columns([3, 2])
+    title.markdown("### Strategies")
+    period = period_box.radio("Period", ["All time", f"This month ({today:%b %Y})"],
+                              horizontal=True, label_visibility="collapsed",
+                              key="strategy_period")
+    year, month = (None, None) if period == "All time" else (today.year, today.month)
+
+    error = st.session_state.pop("strategy_error", None)
+    if error:
+        st.error(error)
+
+    show_archived = st.session_state.get("show_archived_strategies", False)
+    overview = get_strategy_overview(year, month, include_archived=show_archived)
+    active = [row for row in overview if not row["archived"]]
+    traded = [row for row in active if row["trades"]]
+
+    cards = st.columns(4)
+    def card(column, icon, label, row, detail):
+        with column, st.container(border=True):
+            st.caption(f"{icon} {label}")
+            st.markdown(f"**{row['name']}**" if row else "**—**")
+            st.caption(detail(row) if row else "No trades yet")
+    card(cards[0], "📈", "Best performing", max(traded, key=lambda r: r["net_pnl"], default=None),
+         lambda r: f"{r['trades']} trades · {_money(r['net_pnl'])}")
+    card(cards[1], "📉", "Least performing", min(traded, key=lambda r: r["net_pnl"], default=None),
+         lambda r: f"{r['trades']} trades · {_money(r['net_pnl'])}")
+    card(cards[2], "⚡", "Most active", max(traded, key=lambda r: r["trades"], default=None),
+         lambda r: f"{r['trades']} trades")
+    card(cards[3], "🎯", "Best win rate",
+         max(traded, key=lambda r: (r["win_rate"], r["trades"]), default=None),
+         lambda r: f"{_percent(r['win_rate'])} · {r['trades']} trades")
+
+    selected_id = st.session_state.get("selected_strategy")
+    if selected_id not in {row["id"] for row in overview}:
+        selected_id = (active or overview)[0]["id"]
+        st.session_state["selected_strategy"] = selected_id
+
+    widths = [.5, 2.4, .8, 1, 1.1, 1, 1, 1, 1]
+    with st.container(key="thead-strategies"):
+        for column, header in zip(st.columns(widths), ["", "Strategy", "Trades", "Win rate",
+                "Net P&L", "Profit factor", "Avg winner", "Avg loser", ""]):
+            column.markdown(header)
+    for row in overview:
+        chosen = row["id"] == selected_id
+        with st.container(key=f"trow-{'sel-' if chosen else ''}strategy-{row['id']}"):
+            cells = st.columns(widths)
+            cells[0].button("●" if chosen else "○", key=f"pick_strategy_{row['id']}",
+                            on_click=_choose_strategy, args=(row["id"],),
+                            use_container_width=True, help="Show this strategy's rules")
+            cells[1].markdown(f"**{row['name']}**" + (" _(archived)_" if row["archived"] else ""))
+            cells[2].markdown(str(row["trades"]))
+            cells[3].markdown(_percent(row["win_rate"]))
+            cells[4].markdown(_coloured(row["net_pnl"] if row["trades"] else None), unsafe_allow_html=True)
+            cells[5].markdown(_factor(row["profit_factor"]))
+            cells[6].markdown(_money(row["avg_win"]))
+            cells[7].markdown(_money(row["avg_loss"]))
+            cells[8].button("Restore" if row["archived"] else "Archive",
+                            key=f"archive_{row['id']}", use_container_width=True,
+                            on_click=_strategy_action,
+                            args=(set_strategy_archived, row["id"], not row["archived"]))
+
+    footer = st.columns([3, 1])
+    with footer[0], st.expander("➕ Create strategy"):
+        with st.form("create_strategy", clear_on_submit=True):
+            name = st.text_input("Strategy name", placeholder="e.g. Break & retest")
+            if st.form_submit_button("Create", type="primary"):
                 try:
-                    save_rules(text.splitlines())
-                except ValueError as error:
-                    st.error(str(error))
-                else:
-                    st.success("Rules saved.")
+                    st.session_state["selected_strategy"] = create_strategy(name)
                     st.rerun()
+                except ValueError as problem:
+                    st.error(str(problem))
+    footer[1].toggle("Show archived", key="show_archived_strategies")
+
+    chosen_row = next(row for row in overview if row["id"] == selected_id)
+    st.divider()
+    with st.container(key="rules-panel"):
+        st.markdown(f"#### {chosen_row['name']} · Entry and Exit Rules")
+        st.caption("Type in a box to rename a rule. Follow rate, P&L, profit factor and win rate "
+                   "come from the trades you journalled with this strategy.")
+        for group in get_rule_stats(selected_id, year, month):
+            st.markdown(f"**{group['label']}**")
+            rule_widths = [4, 1.1, 1.3, 1.1, 1, .6]
+            if group["rules"]:
+                with st.container(key=f"thead-rules-{group['key']}"):
+                    for column, header in zip(st.columns(rule_widths),
+                            ["Rule", "Follow rate", "Net P&L", "Profit factor", "Win rate", ""]):
+                        column.markdown(header)
+            else:
+                st.caption("No rules yet. Add the first one below.")
+            for rule in group["rules"]:
+                with st.container(key=f"rrow-{rule['id']}"):
+                    cells = st.columns(rule_widths)
+                    cells[0].text_input("Rule", value=rule["text"], key=f"rule_text_{rule['id']}",
+                                        label_visibility="collapsed",
+                                        on_change=_rename_rule_from_input,
+                                        args=(selected_id, rule["id"]))
+                    cells[1].markdown(_percent(rule["follow_rate"]))
+                    cells[2].markdown(_coloured(rule["net_pnl"]), unsafe_allow_html=True)
+                    cells[3].markdown(_factor(rule["profit_factor"]))
+                    cells[4].markdown(_percent(rule["win_rate"]))
+                    cells[5].button("🗑", key=f"del_rule_{rule['id']}", help="Remove this rule",
+                                    on_click=_strategy_action,
+                                    args=(delete_rule, selected_id, rule["id"]))
+            add_box, add_button = st.columns([4, 1.2])
+            add_box.text_input("New rule", placeholder=f"+ Add a rule to {group['label'].lower()}",
+                               key=f"new_rule_{selected_id}_{group['key']}",
+                               label_visibility="collapsed")
+            add_button.button("Add rule", key=f"add_rule_{selected_id}_{group['key']}",
+                              on_click=_add_rule_from_input, args=(selected_id, group["key"]),
+                              use_container_width=True)
 
 
 def main():
@@ -1269,7 +1446,7 @@ def main():
         st.caption("Your trading process, day by day.")
         page = st.radio(
             "Pages",
-            ["Trade calendar", "Rules calendar"],
+            ["Trade calendar", "Strategies"],
             label_visibility="collapsed",
             key="app_page",
         )
@@ -1279,7 +1456,7 @@ def main():
     if page == "Trade calendar":
         show_trade_calendar()
     else:
-        show_rules()
+        show_strategies()
 
 
 if __name__ == "__main__":

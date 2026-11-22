@@ -19,12 +19,14 @@ differently, which of your rules you followed, and screenshots.
 Each row also has a **Delete** button. After you confirm, the trade, its
 journal and its screenshot files are removed.
 
-The **Rules calendar** page is a month grid coloured by discipline (green: all
-rules followed, red: a rule broken, orange: not journalled yet), with a rule by
-rule table for any day and a ranking of the rules you break most. It also has
-tabs for the day plan and review and for editing your rules. It holds the day-level plan, market notes and
-end-of-day review, your list of rules, and a month table showing for each day
-how many trades followed all your rules.
+The **Strategies** page lists your strategies with trades, win rate, net P&L,
+profit factor and average winner / loser, plus cards for the best, least
+performing, most active and best win rate strategy. Pick a strategy to edit
+its **Entry and Exit Rules** (market conditions, entry rules, exit rules). Each
+rule shows its follow rate, net P&L, profit factor and win rate, worked out from
+the trades you journalled. Every trade is saved under a strategy, and its
+journal shows that strategy's rules as checkboxes. The day plan and review is
+in the **Day plan & review** box on the Trade calendar page.
 
 Trade entries include instrument, CE/PE, quantity in units, buy price, and sell
 price. Gross P&L is calculated automatically as `(sell price - buy price) ×
