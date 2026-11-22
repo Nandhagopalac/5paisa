@@ -12,12 +12,16 @@ from A_plus_setup.tradingjourney import (
     get_journal,
     get_month_activity,
     get_rules,
+    get_rules_summary,
+    get_trade_screenshots,
     get_screenshots,
     get_trades,
     initialize_storage,
     save_journal,
     save_rules,
     save_screenshot,
+    save_trade_journal,
+    save_trade_screenshot,
     save_trade,
     update_trade,
 )
@@ -152,6 +156,32 @@ class TradingJournalTests(unittest.TestCase):
         self.assertEqual(activity["2026-11-06"], {"pnl": -932.1, "trade_count": 1})
         self.assertEqual(activity["2026-11-09"], {"pnl": 650, "trade_count": 1})
         self.assertEqual(activity["2026-11-10"], {"pnl": -600, "trade_count": 1})
+
+
+    def test_trade_journal_survives_trade_edit_and_counts_rules(self):
+        d = date(2026, 11, 22)
+        tid = save_trade(d, "NIFTY", "CE", 6, 480, 510, data_dir=self.data_dir)
+        rules = get_rules(self.data_dir)
+        save_trade_journal(d, tid, mood_before="Calm", thinking="Waited for retest",
+                           rules_followed=rules, data_dir=self.data_dir)
+        update_trade(d, tid, "NIFTY", "CE", 6, 480, 520, "edited", data_dir=self.data_dir)
+        trade = get_trades(d, self.data_dir)[0]
+        self.assertEqual(trade["journal"]["thinking"], "Waited for retest")
+        self.assertEqual(trade["pnl"], 15600.0)
+        row = get_rules_summary(2026, 11, self.data_dir)[0]
+        self.assertEqual((row["Trades"], row["Followed all rules"], row["Broke a rule"]), (1, 1, 0))
+
+    def test_trade_screenshot_saved_on_the_trade(self):
+        d = date(2026, 11, 22)
+        tid = save_trade(d, "BANKNIFTY", "PE", 4, 700, 680, data_dir=self.data_dir)
+        buffer = BytesIO()
+        Image.new("RGB", (4, 4)).save(buffer, format="PNG")
+        save_trade_screenshot(d, tid, "chart.png", buffer.getvalue(), data_dir=self.data_dir)
+        shots = get_trade_screenshots(get_trades(d, self.data_dir)[0], self.data_dir)
+        self.assertEqual(len(shots), 1)
+        self.assertTrue(shots[0]["path"].is_file())
+        with self.assertRaises(ValueError):
+            save_trade_screenshot(d, "missing", "x.png", buffer.getvalue(), data_dir=self.data_dir)
 
 
 if __name__ == "__main__":

@@ -10,8 +10,15 @@ The inline trade form records instrument, CE/PE, lots, buy price, and sell
 price. Each NIFTY lot is 65 units and each BANKNIFTY lot is 30 units; other
 instruments default to 1 unit per lot. Quantity and gross P&L are calculated
 automatically, with P&L equal to
-`(sell price - buy price) × lots × lot size`, before fees and taxes. Select a
-saved trade under its date to edit it.
+`(sell price - buy price) × lots × lot size`, before fees and taxes. Every trade row has its own **Edit** button.
+
+Under the trades, each trade has its own journal, written right after the trade:
+feeling at entry and after, what you were thinking, what you would do
+differently, which of your rules you followed, and screenshots.
+
+The **Rules calendar** page holds the day-level plan, market notes and
+end-of-day review, your list of rules, and a month table showing for each day
+how many trades followed all your rules.
 
 Trade entries include instrument, CE/PE, quantity in units, buy price, and sell
 price. Gross P&L is calculated automatically as `(sell price - buy price) ×
