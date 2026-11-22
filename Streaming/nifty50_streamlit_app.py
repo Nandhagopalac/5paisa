@@ -1,4 +1,4 @@
-# streamlit run .\Streaming\nifty50_streamlit_app_onescreen.py
+# & '.\.venv_5paisa\Scripts\python.exe' -m streamlit run '.\Streaming\nifty50_streamlit_app.py'
 import streamlit as st
 import configparser
 import logging
@@ -12,11 +12,16 @@ import pandas as pd
 import os
 from html import escape
 from pathlib import Path
+from Option_chain.nse_equity_derivatives_volume import (
+    fetch_market_data,
+    format_indian,
+)
 
 # ---------------- Look & feel knobs (change these to resize) ----------------
 ROW_FONT_PX = 11       # font size of the stock tables (10 = smaller, 12 = bigger)
 TABLE_COLUMNS = 3      # how many side-by-side tables the 50 stocks are split into
 REFRESH_SECONDS = 1    # how often the data area refreshes (in place, no page reload)
+DERIVATIVES_REFRESH_SECONDS = 15
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -116,6 +121,9 @@ _defaults = {
     'last_rest_poll': 0.0,
     'last_cache_save': 0.0,
     'last_ws_restart': 0.0,
+    'nse_derivatives_data': None,
+    'nse_derivatives_last_poll': 0.0,
+    'nse_derivatives_error': None,
 }
 for _key, _val in _defaults.items():
     if _key not in st.session_state:
@@ -546,6 +554,81 @@ def update_history(rows):
     return top5, chart_df, symbols
 
 
+def render_derivatives_volume():
+    now = time.monotonic()
+    if now - st.session_state.nse_derivatives_last_poll >= DERIVATIVES_REFRESH_SECONDS:
+        st.session_state.nse_derivatives_last_poll = now
+        try:
+            st.session_state.nse_derivatives_data = fetch_market_data()
+            st.session_state.nse_derivatives_error = None
+        except RuntimeError as error:
+            st.session_state.nse_derivatives_error = str(error)
+
+    data = st.session_state.nse_derivatives_data
+    if data is None:
+        if st.session_state.nse_derivatives_error:
+            st.warning(
+                f"Could not refresh NSE volume data: "
+                f"{st.session_state.nse_derivatives_error}"
+            )
+        return
+
+    totals, row_counts, timestamp, market_status = data
+    call_volume = totals["Call"]
+    put_volume = totals["Put"]
+    difference = abs(call_volume - put_volume)
+    if call_volume > put_volume:
+        leading_side = "CE"
+    elif put_volume > call_volume:
+        leading_side = "PE"
+    else:
+        leading_side = "Equal"
+
+    max_volume = max(call_volume, put_volume, 1)
+    chart_rows = []
+    for label, volume, color in (
+        ("CE", call_volume, "#16a36a"),
+        ("PE", put_volume, "#e34b4b"),
+    ):
+        bar_width = volume / max_volume * 100
+        chart_rows.append(
+            '<div style="display:grid;grid-template-columns:30px minmax(80px,1fr) '
+            '115px;align-items:center;gap:8px;margin:5px 0;font-size:11px">'
+            f'<b>{label}</b>'
+            '<div style="height:12px;background:#e2e8f0;border-radius:6px;'
+            'overflow:hidden">'
+            f'<div style="width:{bar_width:.2f}%;height:100%;'
+            f'background:{color};border-radius:6px"></div></div>'
+            f'<span style="text-align:right;font-variant-numeric:tabular-nums">'
+            f'{format_indian(volume)}</span></div>'
+        )
+
+    status_text = ""
+    if isinstance(market_status, dict):
+        status_text = market_status.get("marketStatusMessage", "")
+    result_text = (
+        f"{leading_side} leads by {format_indian(difference)} contracts"
+        if difference
+        else "CE and PE volumes are equal"
+    )
+    if st.session_state.nse_derivatives_error:
+        st.warning(
+            f"Could not refresh NSE volume data: "
+            f"{st.session_state.nse_derivatives_error}"
+        )
+    chart = (
+        '<div class="card"><h4>NSE EQUITY DERIVATIVES · TOP 20 CONTRACTS</h4>'
+        + "".join(chart_rows)
+        + f'<div style="font-size:11px;color:#475569;margin-top:7px">'
+        f'{result_text} · {row_counts["Call"]} CE / {row_counts["Put"]} PE rows'
+        f'</div><div style="font-size:10px;color:#64748b;margin-top:3px">'
+        f'As of {escape(str(timestamp or "unknown"))} IST · '
+        f'{escape(str(status_text))} · refreshes every '
+        f'{DERIVATIVES_REFRESH_SECONDS} seconds</div></div>'
+    )
+    st.markdown(chart, unsafe_allow_html=True)
+
+
 def live_view():
     is_open, market_status = is_market_open()
     ensure_websocket()
@@ -556,6 +639,7 @@ def live_view():
     if not rows:
         st.info("No data yet: last-close snapshot could not be loaded. Retrying...")
         st.session_state.snapshot_loaded = False
+        render_derivatives_volume()
         return
 
     gainers = sum(1 for r in rows if r["pct"] > 0)
@@ -607,6 +691,8 @@ def live_view():
 
     html = bar + '<div class="wrap">' + render_tables_html(rows) + side + '</div>'
     st.markdown(html, unsafe_allow_html=True)
+    st.divider()
+    render_derivatives_volume()
 
 
 def main():
