@@ -6,8 +6,11 @@ from pathlib import Path
 
 from PIL import Image
 
-from A_plus_setup.tradingjourney import (
+from Tradezella.tradingjourney import (
     calculate_trade_pnl,
+    delete_trade,
+    get_day_rule_matrix,
+    get_rule_adherence,
     default_lot_size,
     get_journal,
     get_month_activity,
@@ -182,6 +185,37 @@ class TradingJournalTests(unittest.TestCase):
         self.assertTrue(shots[0]["path"].is_file())
         with self.assertRaises(ValueError):
             save_trade_screenshot(d, "missing", "x.png", buffer.getvalue(), data_dir=self.data_dir)
+
+
+    def test_delete_trade_removes_trade_and_its_screenshots(self):
+        d = date(2026, 11, 22)
+        keep = save_trade(d, "NIFTY", "CE", 1, 100, 110, data_dir=self.data_dir)
+        gone = save_trade(d, "BANKNIFTY", "PE", 1, 100, 90, data_dir=self.data_dir)
+        buffer = BytesIO()
+        Image.new("RGB", (4, 4)).save(buffer, format="PNG")
+        save_trade_screenshot(d, gone, "a.png", buffer.getvalue(), data_dir=self.data_dir)
+        save_trade_screenshot(d, keep, "b.png", buffer.getvalue(), data_dir=self.data_dir)
+        trades = get_trades(d, self.data_dir)
+        gone_file = get_trade_screenshots(trades[1], self.data_dir)[0]["path"]
+        keep_file = get_trade_screenshots(trades[0], self.data_dir)[0]["path"]
+        self.assertEqual(delete_trade(d, gone, data_dir=self.data_dir), 1)
+        self.assertFalse(gone_file.exists())
+        self.assertTrue(keep_file.exists())
+        self.assertEqual([t["id"] for t in get_trades(d, self.data_dir)], [keep])
+        with self.assertRaises(ValueError):
+            delete_trade(d, gone, data_dir=self.data_dir)
+
+    def test_rule_adherence_and_day_matrix(self):
+        d = date(2026, 11, 22)
+        rules = get_rules(self.data_dir)
+        a = save_trade(d, "NIFTY", "CE", 1, 100, 110, data_dir=self.data_dir)
+        b = save_trade(d, "NIFTY", "PE", 1, 100, 90, data_dir=self.data_dir)
+        save_trade_journal(d, a, rules_followed=rules, data_dir=self.data_dir)
+        save_trade_journal(d, b, rules_followed=rules[1:], data_dir=self.data_dir)
+        first = get_rule_adherence(2026, 11, self.data_dir)[0]
+        self.assertEqual((first["Followed"], first["Skipped"], first["Followed %"]), (1, 1, 50.0))
+        matrix = get_day_rule_matrix(d, self.data_dir)
+        self.assertEqual((matrix[0][rules[0]], matrix[1][rules[0]], matrix[1][rules[1]]), ("✓", "✗", "✓"))
 
 
 if __name__ == "__main__":

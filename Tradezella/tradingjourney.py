@@ -39,11 +39,18 @@ hr {margin: .6rem 0 !important;}
 div[data-testid="stHorizontalBlock"] {gap: .5rem;}
 /* trade rows */
 div[class*="st-key-trow-"] p, div[class*="st-key-thead"] p {margin: 0; font-size: .86rem; line-height: 1.2;}
-div[class*="st-key-trow-"] {border-bottom: 1px solid #eceef2; padding: .15rem 0;}
+div[class*="st-key-trow-"] {border-bottom: 1px solid #eceef2; border-left: 4px solid transparent; padding: .15rem .4rem;}
 div[class*="st-key-trow-"] [data-testid="stHorizontalBlock"] {align-items: center;}
 div[class*="st-key-trow-"] button, div[class*="st-key-trow-"] [data-testid="stPopover"] button {
     min-height: 1.9rem; padding: .1rem .5rem; font-size: .8rem; white-space: nowrap;}
-div[class*="st-key-thead"] {margin-top: .5rem;}
+div[class*="st-key-trow-sel-"] {background: #ede9fe; border-left-color: #7656c9; border-radius: 6px;}
+div[class*="st-key-trow-sel-"] button[kind="secondary"] {border-color: #7656c9; color: #5b3fb3; font-weight: 700;}
+div[class*="st-key-journal-panel"] {border: 2px solid #7656c9; border-radius: 10px; padding: .6rem .9rem; background: #faf8ff;}
+div[class*="st-key-edit-trade-panel"] {border: 2px solid #ea580c; border-radius: 10px; background: #fff7ed;}
+div[class*="st-key-edit-trade-panel"] summary p {font-weight: 800; color: #c2410c; letter-spacing: .04em;}
+div[class*="st-key-add-trade-panel"] summary p {font-weight: 700; color: #15803d;}
+div[class*="st-key-delete-confirm"] {border: 2px solid #dc2626; background: #fef2f2; border-radius: 8px; padding: .5rem .8rem;}
+div[class*="st-key-thead"] {margin-top: .5rem; padding: 0 .4rem 0 calc(4px + .4rem);}
 div[class*="st-key-thead"] p {color: #6b7280; font-weight: 600; font-size: .78rem; text-transform: uppercase;}
 </style>
 """
@@ -349,6 +356,25 @@ def save_trade_screenshot(trade_date, trade_id, original_name, content, data_dir
         raise
 
 
+def delete_trade(trade_date, trade_id, data_dir=DATA_DIR):
+    """Remove a trade together with its journal and its screenshot files."""
+    journal = get_journal(trade_date, data_dir)
+    trade = _find_trade(journal, trade_id)
+    journal["trades"] = [t for t in journal["trades"] if t.get("id") != trade_id]
+    journal["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _write_json(_journal_path(trade_date, data_dir), journal)
+    removed = 0
+    for item in trade.get("screenshots", []):
+        file_path = Path(data_dir) / item["relative_path"]
+        if file_path.is_file():
+            file_path.unlink()
+            removed += 1
+    folder = Path(data_dir) / "screenshots" / _date_text(trade_date)
+    if folder.is_dir() and not any(folder.iterdir()):
+        folder.rmdir()
+    return removed
+
+
 def get_trade_screenshots(trade, data_dir=DATA_DIR):
     return [
         {**item, "path": Path(data_dir) / item["relative_path"]}
@@ -356,35 +382,88 @@ def get_trade_screenshots(trade, data_dir=DATA_DIR):
     ]
 
 
-def get_rules_summary(year, month, data_dir=DATA_DIR):
-    """Per day: trades taken, trades with every rule followed, trades journalled."""
-    rules = get_rules(data_dir)
+def _month_journals(year, month, data_dir):
     month_start = date(year, month, 1)
     month_end = date(year, month, calendar.monthrange(year, month)[1])
-    rows = []
+    initialize_storage(data_dir)
     for path in sorted((Path(data_dir) / "journals").glob("*.json")):
         trade_date = date.fromisoformat(path.stem)
-        if not month_start <= trade_date <= month_end:
-            continue
-        trades = json.loads(path.read_text(encoding="utf-8")).get("trades", [])
+        if month_start <= trade_date <= month_end:
+            yield trade_date, json.loads(path.read_text(encoding="utf-8"))
+
+
+def get_rules_summary(year, month, data_dir=DATA_DIR):
+    """Per day: trades taken, trades journalled, trades with every rule followed."""
+    rules = get_rules(data_dir)
+    rows = []
+    for trade_date, journal in _month_journals(year, month, data_dir):
+        trades = journal.get("trades", [])
         if not trades:
             continue
+        journalled = [t for t in trades if t.get("journal")]
         followed_all = sum(
-            1 for trade in trades
-            if trade.get("journal") and all(
-                rule in trade["journal"].get("rules_followed", []) for rule in rules
-            )
+            1 for t in journalled
+            if all(rule in t["journal"].get("rules_followed", []) for rule in rules)
         )
         rows.append(
             {
                 "Date": trade_date.isoformat(),
                 "Trades": len(trades),
-                "Journalled": sum(1 for trade in trades if trade.get("journal")),
+                "Journalled": len(journalled),
                 "Followed all rules": followed_all,
-                "Broke a rule": sum(1 for trade in trades if trade.get("journal")) - followed_all,
-                "P&L": sum(trade.get("pnl") or 0 for trade in trades),
+                "Broke a rule": len(journalled) - followed_all,
+                "P&L": sum(t.get("pnl") or 0 for t in trades),
             }
         )
+    return rows
+
+
+def get_rule_adherence(year, month, data_dir=DATA_DIR):
+    """For each rule: how often it was followed across the month's journalled trades."""
+    rules = get_rules(data_dir)
+    counts = {rule: [0, 0, 0.0, 0.0] for rule in rules}
+    for _, journal in _month_journals(year, month, data_dir):
+        for trade in journal.get("trades", []):
+            entry = trade.get("journal")
+            if not entry:
+                continue
+            for rule in rules:
+                if rule in entry.get("rules_followed", []):
+                    counts[rule][0] += 1
+                    counts[rule][2] += trade.get("pnl") or 0
+                else:
+                    counts[rule][1] += 1
+                    counts[rule][3] += trade.get("pnl") or 0
+    rows = []
+    for rule, (yes, no, pnl_yes, pnl_no) in counts.items():
+        total = yes + no
+        rows.append(
+            {
+                "Rule": rule,
+                "Followed": yes,
+                "Skipped": no,
+                "Followed %": (yes / total * 100) if total else None,
+                "P&L when followed": pnl_yes,
+                "P&L when skipped": pnl_no,
+            }
+        )
+    return rows
+
+
+def get_day_rule_matrix(trade_date, data_dir=DATA_DIR):
+    """One row per trade with a tick or cross for each rule."""
+    rules = get_rules(data_dir)
+    rows = []
+    for number, trade in enumerate(get_trades(trade_date, data_dir), start=1):
+        entry = trade.get("journal")
+        row = {
+            "#": number,
+            "Trade": f"{trade.get('instrument', '')} {trade.get('option_type', '')}".strip(),
+            "P&L": trade.get("pnl"),
+        }
+        for rule in rules:
+            row[rule] = "—" if not entry else ("✓" if rule in entry.get("rules_followed", []) else "✗")
+        rows.append(row)
     return rows
 
 
@@ -422,6 +501,22 @@ def get_month_activity(year, month, data_dir=DATA_DIR):
 def select_calendar_day(trade_date):
     st.session_state["selected_trade_date"] = date.fromisoformat(trade_date)
     st.session_state["editing_trade"] = None
+    st.session_state["selected_trade"] = None
+
+
+def current_trade_id(trades, trade_date):
+    """The trade chosen in the table; else the first one not yet journalled."""
+    chosen = st.session_state.get("selected_trade")
+    if chosen and chosen["date"] == trade_date and any(t.get("id") == chosen["id"] for t in trades):
+        return chosen["id"]
+    if not trades:
+        return None
+    pending = next((t for t in trades if not t.get("journal")), trades[0])
+    return pending["id"]
+
+
+def choose_trade(trade_date, trade_id):
+    st.session_state["selected_trade"] = {"date": trade_date, "id": trade_id}
 
 
 def shift_calendar_month(offset):
@@ -432,6 +527,7 @@ def shift_calendar_month(offset):
     st.session_state["calendar_month"] = new_month
     st.session_state["selected_trade_date"] = new_month
     st.session_state["editing_trade"] = None
+    st.session_state["selected_trade"] = None
 
 
 def _trade_input_key(name, trade_date, trade_id=None):
@@ -484,9 +580,11 @@ def submit_trade_entry(trade_date, trade_id=None):
     option_type = st.session_state[
         _trade_input_key("option_type", trade_date, trade_id)
     ]
-    notes = st.session_state.get(
-        _trade_input_key("notes", trade_date, trade_id), ""
-    )
+    notes = ""
+    if trade_id:
+        notes = next(
+            (t.get("notes", "") for t in get_trades(day) if t.get("id") == trade_id), ""
+        )
     try:
         if trade_id:
             update_trade(
@@ -500,7 +598,7 @@ def submit_trade_entry(trade_date, trade_id=None):
                 notes,
             )
         else:
-            save_trade(
+            new_id = save_trade(
                 day,
                 instrument,
                 option_type,
@@ -509,6 +607,7 @@ def submit_trade_entry(trade_date, trade_id=None):
                 sell_price,
                 notes,
             )
+            choose_trade(trade_date, new_id)
     except ValueError as error:
         st.session_state["trade_feedback"] = {
             "date": trade_date,
@@ -526,7 +625,6 @@ def submit_trade_entry(trade_date, trade_id=None):
         ("lots", 1),
         ("buy_price", None),
         ("sell_price", None),
-        ("notes", ""),
     ):
         st.session_state[_trade_input_key(name, trade_date, trade_id)] = value
 
@@ -555,13 +653,14 @@ def show_trade_entries(selected_date):
             st.session_state["editing_trade"] = None
 
     if trades:
-        widths = [1.6, .7, .6, .8, .9, .8, .8, 1.2, 3.2, .8, 1.3]
-        headers = ["Instrument", "CE/PE", "Lots", "Lot size", "Qty",
-                   "Buy", "Sell", "P&L", "Notes", "", ""]
+        widths = [.55, 1.6, .7, .6, .9, .8, .8, .8, 1.2, .8, 1.3, 1.25]
+        headers = ["#", "Instrument", "CE/PE", "Lots", "Lot size", "Qty",
+                   "Buy", "Sell", "P&L", "", "", ""]
+        chosen_id = current_trade_id(trades, trade_date)
         with st.container(key="thead"):
             for column, header in zip(st.columns(widths), headers):
                 column.markdown(header)
-        for trade in trades:
+        for number, trade in enumerate(trades, start=1):
             lots, lot_size = _trade_lot_values(trade)
             pnl = trade.get("pnl")
             pnl_color = "#15803d" if (pnl or 0) > 0 else ("#dc2626" if (pnl or 0) < 0 else "inherit")
@@ -575,16 +674,24 @@ def show_trade_entries(selected_date):
                 trade.get("sell_price", trade.get("exit_price")),
                 "—" if pnl is None else (
                     f"<span style='color:{pnl_color};font-weight:700'>{pnl:,.0f}</span>"),
-                trade.get("notes", ""),
             ]
             is_this_row = bool(editing_trade and editing_trade.get("id") == trade["id"])
-            with st.container(key=f"trow-{trade_date}-{trade['id']}"):
+            is_chosen = trade["id"] == chosen_id
+            with st.container(key=f"trow-{'sel-' if is_chosen else ''}{trade_date}-{trade['id']}"):
                 cells = st.columns(widths)
-                for cell, value in zip(cells, values):
+                if cells[0].button(
+                    f"● {number}" if is_chosen else f"○ {number}",
+                    key=f"pick_row_{trade_date}_{trade['id']}",
+                    help="Select this trade to see its journal below",
+                    use_container_width=True,
+                ):
+                    choose_trade(trade_date, trade["id"])
+                    st.rerun()
+                for cell, value in zip(cells[1:], values):
                     text = "" if value is None else (f"{value:g}" if isinstance(value, float) else str(value))
                     cell.markdown(text, unsafe_allow_html=True)
                 shot_count = len(trade.get("screenshots", []))
-                with cells[-1].popover(
+                with cells[-2].popover(
                     f"📷 {shot_count}" if shot_count else "📷 Add",
                     use_container_width=True,
                 ):
@@ -602,12 +709,13 @@ def show_trade_entries(selected_date):
                                                       upload.name, upload.getvalue())
                             except ValueError as error:
                                 st.error(f"{upload.name}: {error}")
+                        choose_trade(trade_date, trade["id"])
                         st.rerun()
                     for shot in get_trade_screenshots(trade):
                         if shot["path"].is_file():
                             st.image(str(shot["path"]), caption=shot["original_name"],
                                      use_container_width=True)
-                if cells[-2].button(
+                if cells[-3].button(
                     "Editing" if is_this_row else "Edit",
                     key=f"edit_row_{trade_date}_{trade['id']}",
                     disabled=is_this_row,
@@ -617,7 +725,43 @@ def show_trade_entries(selected_date):
                         "date": trade_date,
                         "id": trade["id"],
                     }
+                    choose_trade(trade_date, trade["id"])
                     st.rerun()
+                if cells[-1].button(
+                    "🗑 Delete",
+                    key=f"delete_row_{trade_date}_{trade['id']}",
+                    use_container_width=True,
+                ):
+                    st.session_state["confirm_delete"] = {"date": trade_date, "id": trade["id"]}
+                    choose_trade(trade_date, trade["id"])
+                    st.rerun()
+        pending = st.session_state.get("confirm_delete")
+        if pending and pending["date"] == trade_date:
+            target = next((t for t in trades if t.get("id") == pending["id"]), None)
+            if target is None:
+                st.session_state["confirm_delete"] = None
+            else:
+                with st.container(key="delete-confirm"):
+                    shots = len(target.get("screenshots", []))
+                    st.markdown(
+                        f"**Delete this trade?** {target.get('instrument', '')} "
+                        f"{target.get('option_type', '')} · P&L "
+                        f"{(target.get('pnl') or 0):,.0f}. Its journal and "
+                        f"{shots} screenshot{'s' if shots != 1 else ''} will be removed "
+                        "permanently."
+                    )
+                    yes, no, _ = st.columns([1, 1, 5])
+                    if yes.button("Yes, delete", key="confirm_delete_yes", type="primary"):
+                        delete_trade(selected_date, target["id"])
+                        st.session_state["confirm_delete"] = None
+                        st.session_state["editing_trade"] = None
+                        st.session_state["selected_trade"] = None
+                        st.session_state["trade_feedback"] = {
+                            "date": trade_date, "success": "Trade and its screenshots deleted."}
+                        st.rerun()
+                    if no.button("Cancel", key="confirm_delete_no"):
+                        st.session_state["confirm_delete"] = None
+                        st.rerun()
     else:
         st.caption("No trades recorded for this date yet.")
 
@@ -642,10 +786,10 @@ def show_trade_entries(selected_date):
         editing_trade.get("sell_price", editing_trade.get("exit_price"))
         if is_editing else None
     )
-    editing_notes = editing_trade.get("notes", "") if is_editing else ""
 
-    with st.expander(
-        "Edit trade" if is_editing else "Add a trade",
+    panel = st.container(key="edit-trade-panel" if is_editing else "add-trade-panel")
+    with panel, st.expander(
+        "✏️ EDIT TRADE" if is_editing else "➕ Add a trade",
         expanded=is_editing or not trades,
     ):
         with st.form(f"trade_form_{trade_date}_{form_id}", clear_on_submit=not is_editing):
@@ -692,11 +836,6 @@ def show_trade_entries(selected_date):
                 "Gross P&L = (sell price − buy price) × lots × lot size. "
                 "Lot size defaults to 65 for NIFTY and 30 for BANKNIFTY."
             )
-            st.text_area(
-                "Trade notes",
-                value=editing_notes,
-                key=form_key("notes"),
-            )
             st.form_submit_button(
                 "Save changes" if is_editing else "Add trade",
                 on_click=submit_trade_entry,
@@ -712,84 +851,86 @@ MOODS = ["Not recorded", "Calm", "Confident", "Focused", "Excited", "Anxious",
 
 
 def show_trade_journals(selected_date):
-    """One journal per trade, written right after the trade."""
+    """The journal for the trade selected in the table above."""
     trades = get_trades(selected_date)
     if not trades:
         return
     rules = get_rules()
     trade_date = selected_date.isoformat()
-    st.subheader("Journal for each trade")
-    st.caption("Write this right after each trade: how you felt, what you thought, "
-               "which rules you followed, and a screenshot.")
-    for number, trade in enumerate(trades, start=1):
-        saved = trade.get("journal") or {}
-        followed = set(saved.get("rules_followed", []))
-        label = (f"Trade {number} · {trade.get('instrument', '')} "
-                 f"{trade.get('option_type', '')} · P&L {trade.get('pnl', 0):,.2f}")
-        if saved:
-            label += f" · {len(followed & set(rules))}/{len(rules)} rules followed"
-        else:
-            label += " · not journalled yet"
-        with st.expander(label, expanded=not saved):
-            key = f"{trade_date}_{trade['id']}"
-            with st.form(f"trade_journal_{key}"):
-                left, right = st.columns(2)
-                mood_before = left.selectbox(
-                    "Feeling at entry", MOODS,
-                    index=MOODS.index(saved["mood_before"]) if saved.get("mood_before") in MOODS else 0,
-                    key=f"mb_{key}",
-                )
-                mood_after = right.selectbox(
-                    "Feeling after the trade", MOODS,
-                    index=MOODS.index(saved["mood_after"]) if saved.get("mood_after") in MOODS else 0,
-                    key=f"ma_{key}",
-                )
-                thinking = st.text_area("What I was thinking", value=saved.get("thinking", ""),
-                                        key=f"th_{key}")
-                improve = st.text_area("What I would do differently",
-                                       value=saved.get("improve", ""), key=f"im_{key}")
-                st.markdown("**Rules I followed on this trade**")
-                ticks = {}
-                for index, rule in enumerate(rules):
-                    suffix = hashlib.sha1(rule.encode("utf-8")).hexdigest()[:8]
-                    ticks[rule] = st.checkbox(rule, value=rule in followed,
-                                              key=f"rl_{key}_{index}_{suffix}")
-                if st.form_submit_button("Save trade journal", type="primary"):
-                    save_trade_journal(
-                        selected_date, trade["id"],
-                        mood_before="" if mood_before == "Not recorded" else mood_before,
-                        mood_after="" if mood_after == "Not recorded" else mood_after,
-                        thinking=thinking, improve=improve,
-                        rules_followed=[r for r, on in ticks.items() if on],
-                    )
-                    st.rerun()
-
-            uploads = st.file_uploader(
-                "Paste or upload a screenshot for this trade",
-                type=["png", "jpg", "jpeg", "webp"],
-                accept_multiple_files=True,
-                key=f"up_{key}",
+    chosen_id = current_trade_id(trades, trade_date)
+    number, trade = next((n, t) for n, t in enumerate(trades, start=1) if t["id"] == chosen_id)
+    saved = trade.get("journal") or {}
+    followed = set(saved.get("rules_followed", []))
+    pnl = trade.get("pnl") or 0
+    status = (f"{len(followed & set(rules))}/{len(rules)} rules followed"
+              if saved else "not journalled yet")
+    with st.container(key="journal-panel"):
+        st.markdown(
+            f"**Journal · Trade {number} · {trade.get('instrument', '')} "
+            f"{trade.get('option_type', '')} · P&L {pnl:,.0f}** &nbsp;·&nbsp; {status}"
+        )
+        key = f"{trade_date}_{trade['id']}"
+        with st.form(f"trade_journal_{key}"):
+            left, right = st.columns(2)
+            mood_before = left.selectbox(
+                "Feeling at entry", MOODS,
+                index=MOODS.index(saved["mood_before"]) if saved.get("mood_before") in MOODS else 0,
+                key=f"mb_{key}",
             )
-            if st.button("Save screenshot", key=f"sv_{key}", disabled=not uploads):
-                for upload in uploads:
-                    try:
-                        save_trade_screenshot(selected_date, trade["id"],
-                                              upload.name, upload.getvalue())
-                    except ValueError as error:
-                        st.error(f"{upload.name}: {error}")
+            mood_after = right.selectbox(
+                "Feeling after the trade", MOODS,
+                index=MOODS.index(saved["mood_after"]) if saved.get("mood_after") in MOODS else 0,
+                key=f"ma_{key}",
+            )
+            thinking = st.text_area("What I was thinking", value=saved.get("thinking", ""),
+                                    height=90, key=f"th_{key}")
+            improve = st.text_area("What I would do differently",
+                                   value=saved.get("improve", ""), height=90, key=f"im_{key}")
+            st.markdown("**Rules I followed on this trade**")
+            ticks = {}
+            rule_columns = st.columns(2)
+            for index, rule in enumerate(rules):
+                suffix = hashlib.sha1(rule.encode("utf-8")).hexdigest()[:8]
+                ticks[rule] = rule_columns[index % 2].checkbox(
+                    rule, value=rule in followed, key=f"rl_{key}_{index}_{suffix}")
+            if st.form_submit_button("Save trade journal", type="primary"):
+                save_trade_journal(
+                    selected_date, trade["id"],
+                    mood_before="" if mood_before == "Not recorded" else mood_before,
+                    mood_after="" if mood_after == "Not recorded" else mood_after,
+                    thinking=thinking, improve=improve,
+                    rules_followed=[r for r, on in ticks.items() if on],
+                )
                 st.rerun()
-            for shot in get_trade_screenshots(trade):
-                if shot["path"].is_file():
-                    st.image(str(shot["path"]), caption=shot["original_name"],
-                             use_container_width=True)
-                else:
-                    st.warning(f"Screenshot file is missing: {shot['original_name']}")
+
+        uploads = st.file_uploader(
+            "Screenshots for this trade",
+            type=["png", "jpg", "jpeg", "webp"],
+            accept_multiple_files=True,
+            key=f"up_{key}",
+        )
+        if st.button("Save screenshot", key=f"sv_{key}", disabled=not uploads):
+            for upload in uploads:
+                try:
+                    save_trade_screenshot(selected_date, trade["id"],
+                                          upload.name, upload.getvalue())
+                except ValueError as error:
+                    st.error(f"{upload.name}: {error}")
+            st.rerun()
+        shots = get_trade_screenshots(trade)
+        if shots:
+            shot_columns = st.columns(min(3, len(shots)))
+            for index, shot in enumerate(shots):
+                with shot_columns[index % len(shot_columns)]:
+                    if shot["path"].is_file():
+                        st.image(str(shot["path"]), caption=shot["original_name"],
+                                 use_container_width=True)
+                    else:
+                        st.warning(f"Screenshot file is missing: {shot['original_name']}")
 
 
 def show_daily_journal(selected_date):
     journal = get_journal(selected_date) or {}
-    rules = get_rules()
-    checked_rules = set(journal.get("rules_checked", []))
 
     with st.form(f"journal_form_{selected_date.isoformat()}"):
         st.subheader("Before and after the session")
@@ -836,16 +977,6 @@ def show_daily_journal(selected_date):
                 key=f"daily_pnl_{selected_date}",
             )
 
-        st.markdown("#### Daily rules")
-        rule_values = {}
-        for index, rule in enumerate(rules):
-            key_suffix = hashlib.sha1(rule.encode("utf-8")).hexdigest()[:10]
-            rule_values[rule] = st.checkbox(
-                rule,
-                value=rule in checked_rules,
-                key=f"rule_{selected_date}_{index}_{key_suffix}",
-            )
-
         save_clicked = st.form_submit_button("Save daily journal", type="primary")
         if save_clicked:
             save_journal(
@@ -855,9 +986,7 @@ def show_daily_journal(selected_date):
                 review=review,
                 mood="" if mood == "Not recorded" else mood,
                 pnl=daily_pnl,
-                rules_checked=[
-                    rule for rule, is_checked in rule_values.items() if is_checked
-                ],
+                rules_checked=journal.get("rules_checked", []),
             )
             st.session_state["journal_saved_date"] = selected_date.isoformat()
             st.rerun()
@@ -997,51 +1126,131 @@ def show_trade_calendar():
     show_trade_journals(selected_date)
 
 
+def _rules_tone(row):
+    if not row:
+        return "flat"
+    if row["Broke a rule"]:
+        return "bad"
+    if row["Journalled"] < row["Trades"]:
+        return "pending"
+    return "ok"
+
+
 def show_rules():
-    st.title("Rules calendar")
-    st.caption("Your rules, your day-level plan and review, and how well you followed "
-               "the rules each day.")
-
-    st.subheader("How I followed my rules this month")
     month = st.session_state["calendar_month"]
+    selected = st.session_state["selected_trade_date"]
     summary = get_rules_summary(month.year, month.month)
-    st.caption(f"{month:%B %Y}. A trade counts as 'followed all rules' only when every "
-               "rule is ticked in its trade journal.")
-    if summary:
-        st.dataframe(summary, hide_index=True, use_container_width=True)
-    else:
-        st.caption("No trades this month yet.")
+    by_date = {row["Date"]: row for row in summary}
 
-    st.divider()
-    st.subheader("Day plan and review")
-    selected = st.date_input("Day", value=st.session_state["selected_trade_date"],
-                             key="rules_day_picker")
-    st.session_state["selected_trade_date"] = selected
-    show_daily_journal(selected)
+    previous, label, following = st.columns([1, 6, 1])
+    previous.button("‹", key="rules_prev", help="Previous month",
+                    on_click=shift_calendar_month, args=(-1,), use_container_width=True)
+    label.markdown(
+        f"<div style='text-align:center;font-size:1.15rem;font-weight:700;padding-top:.3rem'>"
+        f"Rules calendar · {month:%B %Y}</div>", unsafe_allow_html=True)
+    following.button("›", key="rules_next", help="Next month",
+                     on_click=shift_calendar_month, args=(1,), use_container_width=True)
 
-    st.divider()
-    st.subheader("My rules")
-    st.info(
-        "These rules appear as checkboxes in every trade journal. "
-        "The 1:1:1 rule is included as a reminder; add your own definition here."
-    )
-    rules = get_rules()
-    with st.form("rules_form"):
-        text = st.text_area(
-            "One rule per line",
-            value="\n".join(rules),
-            height=240,
-            help="Remove a line to remove that rule from future checklists.",
-        )
-        save_clicked = st.form_submit_button("Save rules", type="primary")
-        if save_clicked:
-            try:
-                save_rules(text.splitlines())
-            except ValueError as error:
-                st.error(str(error))
+    total = sum(row["Trades"] for row in summary)
+    journalled = sum(row["Journalled"] for row in summary)
+    followed = sum(row["Followed all rules"] for row in summary)
+    metrics = st.columns(5)
+    metrics[0].metric("Trades", total)
+    metrics[1].metric("Journalled", f"{journalled}/{total}")
+    metrics[2].metric("Followed all rules", followed)
+    metrics[3].metric("Discipline", f"{followed / journalled * 100:.0f}%" if journalled else "—")
+    metrics[4].metric("P&L", f"{sum(row['P&L'] for row in summary):,.0f}")
+
+    calendar_tab, day_tab, rules_tab = st.tabs(
+        ["📅 Rules calendar", "📝 Day plan & review", "⚙️ My rules"])
+
+    with calendar_tab:
+        st.markdown(
+            """
+            <style>
+            div[class*="st-key-rcal-"] button {height: 50px; min-height: 50px; width: 100%;
+                white-space: pre-line; line-height: 1.25; font-size: .78rem; padding: .1rem .2rem; margin: 0;}
+            div[class*="st-key-rcal-ok"] button {background: #4caf50 !important; border-color: #4caf50 !important; color: #fff !important;}
+            div[class*="st-key-rcal-bad"] button {background: #e3444b !important; border-color: #e3444b !important; color: #fff !important;}
+            div[class*="st-key-rcal-pending"] button {background: #f59e0b !important; border-color: #f59e0b !important; color: #fff !important;}
+            div[class*="st-key-rcal-"][class*="-selected-"] button {outline: 3px solid #7656c9; outline-offset: 1px;}
+            </style>
+            """, unsafe_allow_html=True)
+        st.caption("🟩 all rules followed   🟥 a rule was broken   🟧 trades not journalled yet   "
+                   "⬜ no trades.  Click a day to see it below.")
+        for column, weekday in zip(st.columns(7), ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")):
+            column.markdown(f"**{weekday}**")
+        for week in calendar.Calendar(firstweekday=calendar.MONDAY).monthdayscalendar(month.year, month.month):
+            for column, day_number in zip(st.columns(7), week):
+                if day_number == 0:
+                    continue
+                day = date(month.year, month.month, day_number)
+                row = by_date.get(day.isoformat())
+                tone = _rules_tone(row)
+                text = f"{day_number}\n"
+                if row:
+                    text += f"{row['Followed all rules']}/{row['Trades']} ✓"
+                chosen = "-selected" if day == selected else ""
+                with column.container(key=f"rcal-{tone}{chosen}-{day.isoformat()}"):
+                    st.button(text, key=f"rcal-day-{day.isoformat()}",
+                              on_click=select_calendar_day, args=(day.isoformat(),),
+                              use_container_width=True)
+
+        left, right = st.columns([3, 2])
+        with left:
+            st.markdown(f"**{selected:%d %b %Y}: rule by rule, every trade**")
+            matrix = get_day_rule_matrix(selected)
+            if matrix:
+                st.dataframe(matrix, hide_index=True, use_container_width=True)
+                st.caption("✓ followed   ✗ skipped   — trade not journalled yet")
             else:
-                st.success("Daily rules saved.")
-                st.rerun()
+                st.caption("No trades on this day.")
+        with right:
+            st.markdown("**Which rules do I break most?**")
+            adherence = get_rule_adherence(month.year, month.month)
+            if any(item["Followed"] + item["Skipped"] for item in adherence):
+                st.dataframe(
+                    [{"Rule": i["Rule"], "Followed %": i["Followed %"],
+                      "P&L followed": i["P&L when followed"],
+                      "P&L skipped": i["P&L when skipped"]} for i in adherence],
+                    hide_index=True, use_container_width=True,
+                    column_config={
+                        "Followed %": st.column_config.ProgressColumn(
+                            "Followed %", min_value=0, max_value=100, format="%.0f%%"),
+                        "P&L followed": st.column_config.NumberColumn(format="%.0f"),
+                        "P&L skipped": st.column_config.NumberColumn(format="%.0f"),
+                    })
+            else:
+                st.caption("Journal a trade and tick its rules to see this.")
+
+    with day_tab:
+        picked = st.date_input("Day", value=selected)
+        if picked != selected:
+            st.session_state["selected_trade_date"] = picked
+            st.session_state["selected_trade"] = None
+        show_daily_journal(picked)
+
+    with rules_tab:
+        st.info(
+            "These rules appear as checkboxes in every trade journal. "
+            "The 1:1:1 rule is included as a reminder; add your own definition here."
+        )
+        rules = get_rules()
+        with st.form("rules_form"):
+            text = st.text_area(
+                "One rule per line",
+                value="\n".join(rules),
+                height=240,
+                help="Remove a line to remove that rule from future checklists.",
+            )
+            if st.form_submit_button("Save rules", type="primary"):
+                try:
+                    save_rules(text.splitlines())
+                except ValueError as error:
+                    st.error(str(error))
+                else:
+                    st.success("Rules saved.")
+                    st.rerun()
 
 
 def main():
