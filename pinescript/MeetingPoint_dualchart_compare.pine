@@ -4,13 +4,13 @@ indicator("Dual Chart Comparison - V1", shorttitle="Dual chart Comparision", ove
 // ---------- Inputs ----------
 g1 = "Symbol 1 Settings"
 en1_in = input.bool(true,  "Enable Symbol 1", group=g1)
-sym1   = input.symbol("NSE:NIFTY261123C25200", "Select Symbol 1", group=g1)
+sym1   = input.symbol("NSE:NIFTY261123C25800", "Select Symbol 1", group=g1)
 pd1    = input.bool(false, "Show Symbol 1 Prev Day Lines", group=g1)
 vw1    = input.bool(true,  "Show Symbol 1 VWAP", group=g1)
 
 g2 = "Symbol 2 Settings"
 en2_in = input.bool(true,  "Enable Symbol 2", group=g2)
-sym2   = input.symbol("NSE:NIFTY261123P25200", "Select Symbol 2", group=g2)
+sym2   = input.symbol("NSE:NIFTY261123P25800", "Select Symbol 2", group=g2)
 pd2    = input.bool(false, "Show Symbol 2 Prev Day Lines", group=g2)
 vw2    = input.bool(true,  "Show Symbol 2 VWAP", group=g2)
 
