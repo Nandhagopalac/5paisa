@@ -361,10 +361,15 @@ def _trade_details(instrument, option_type, lots, buy_price, sell_price, notes):
     }
 
 
+INSTRUMENTS = ["NIFTY", "BANKNIFTY", "FINNIFTY"]
+
+
 def default_lot_size(instrument):
     normalized = "".join(character for character in instrument.upper() if character.isalnum())
     if "BANKNIFTY" in normalized:
         return 30
+    if "FINNIFTY" in normalized:
+        return 60
     if "NIFTY" in normalized:
         return 65
     return 1
@@ -742,7 +747,7 @@ def submit_trade_entry(trade_date, trade_id=None):
     }
     st.session_state["editing_trade"] = None
     for name, value in (
-        ("instrument", ""),
+        ("instrument", INSTRUMENTS[0]),
         ("lots", 1),
         ("buy_price", None),
         ("sell_price", None),
@@ -895,6 +900,11 @@ def show_trade_entries(selected_date):
         if is_editing
         else ""
     )
+    if editing_instrument.upper() in INSTRUMENTS:
+        editing_instrument = editing_instrument.upper()
+    instrument_options = INSTRUMENTS + (
+        [editing_instrument] if editing_instrument and editing_instrument not in INSTRUMENTS else []
+    )
     lots_default = _trade_lot_values(editing_trade)[0] if is_editing else 1
     if lots_default is not None:
         lots_default = max(1, round(lots_default))
@@ -928,10 +938,10 @@ def show_trade_entries(selected_date):
                 format_func=lambda sid: strategy_names[sid],
                 key=form_key("strategy"),
             )
-            instrument_column.text_input(
+            instrument_column.selectbox(
                 "Instrument",
-                placeholder="e.g. NIFTY 24500",
-                value=editing_instrument,
+                instrument_options,
+                index=instrument_options.index(editing_instrument) if editing_instrument else 0,
                 key=form_key("instrument"),
             )
             option_column.selectbox(
@@ -946,7 +956,7 @@ def show_trade_entries(selected_date):
                 value=lots_default,
                 step=1,
                 help=(
-                    "NIFTY: 65 units per lot. BANKNIFTY: 30 units per lot. "
+                    "NIFTY: 65 units per lot. BANKNIFTY: 30. FINNIFTY: 60. "
                     "Other instruments default to 1."
                 ),
                 key=form_key("lots"),
@@ -968,7 +978,7 @@ def show_trade_entries(selected_date):
             )
             st.caption(
                 "Gross P&L = (sell price − buy price) × lots × lot size. "
-                "Lot size defaults to 65 for NIFTY and 30 for BANKNIFTY."
+                "Lot size: 65 for NIFTY, 30 for BANKNIFTY, 60 for FINNIFTY."
             )
             st.form_submit_button(
                 "Save changes" if is_editing else "Add trade",

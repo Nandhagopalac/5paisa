@@ -102,6 +102,7 @@ class TradingJournalTests(unittest.TestCase):
         self.assertIsNone(calculate_trade_pnl(50, 100, None))
         self.assertEqual(default_lot_size("NIFTY 50"), 65)
         self.assertEqual(default_lot_size("BANK NIFTY"), 30)
+        self.assertEqual(default_lot_size("FINNIFTY"), 60)
         self.assertEqual(default_lot_size("RELIANCE"), 1)
         with self.assertRaises(ValueError):
             save_trade(
