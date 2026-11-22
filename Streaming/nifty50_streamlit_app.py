@@ -1,4 +1,4 @@
-# streamlit run .\Streaming\nifty50_streamlit_app.py
+# streamlit run .\Streaming\nifty50_streamlit_app_onescreen.py
 import streamlit as st
 import configparser
 import logging
@@ -8,224 +8,176 @@ import queue
 from datetime import datetime, timedelta
 import time
 import threading
-import sys
 import pandas as pd
 import os
 from html import escape
 from pathlib import Path
 
+# ---------------- Look & feel knobs (change these to resize) ----------------
+ROW_FONT_PX = 11       # font size of the stock tables (10 = smaller, 12 = bigger)
+TABLE_COLUMNS = 3      # how many side-by-side tables the 50 stocks are split into
+REFRESH_SECONDS = 1    # how often the data area refreshes (in place, no page reload)
+
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="NIFTY 50 Live Feed",
+    page_title="NIFTY 50 Live",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-st.markdown(
-    """
-    <style>
-    :root {
-        --text-color: #1e293b;
-        --background-color: #f3f6fb;
-        --secondary-background-color: #ffffff;
-    }
+CSS = """
+<style>
+[data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"],
+[data-testid="stStatusWidget"], footer, #MainMenu { display: none !important; }
+.stApp, [data-testid="stAppViewContainer"] { background: #eef2f8; }
+.block-container, [data-testid="stMainBlockContainer"] {
+    max-width: 100% !important;
+    padding: 0.4rem 0.7rem 0.2rem 0.7rem !important;
+}
+[data-testid="stVerticalBlock"] { gap: 0.3rem; }
 
-    .stApp {
-        background: #f3f6fb;
-        color: #1e293b !important;
-    }
+.topbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+    background: #14213d; border-radius: 10px; padding: 5px 10px; margin-bottom: 6px;
+}
+.topbar .title { font-weight: 700; font-size: 0.95rem; color: #ffffff; margin-right: 6px; }
+.chip {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    background: #22324f; color: #cbd5e1; font-size: 0.72rem; white-space: nowrap;
+}
+.chip b { color: #ffffff; }
+.chip.green { background: #064e3b; color: #a7f3d0; }
+.chip.green b { color: #d1fae5; }
+.chip.red { background: #7f1d1d; color: #fecaca; }
+.chip.red b { color: #fee2e2; }
+.chip.amber { background: #78350f; color: #fde68a; }
+.chip.amber b { color: #fef3c7; }
 
-    [data-testid="stAppViewContainer"] {
-        background: #f3f6fb;
-        color: #1e293b !important;
-    }
+.wrap { display: grid; grid-template-columns: 3.4fr 1.2fr; gap: 8px; align-items: start; }
+.tables { display: grid; grid-template-columns: repeat(__COLS__, 1fr); gap: 6px; }
 
-    [data-testid="stHeader"] {
-        background: rgba(243, 246, 251, 0.9);
-    }
+[data-testid="stMarkdownContainer"] table.tbl {
+    width: 100%; border-collapse: collapse; margin: 0 !important;
+    font-size: __FS__px; background: #ffffff; border: 1px solid #dde5f0;
+    border-radius: 8px; overflow: hidden;
+}
+[data-testid="stMarkdownContainer"] table.tbl th {
+    background: #f4f7fb; color: #64748b; font-weight: 600; font-size: 10px;
+    text-align: right; padding: 2px 5px !important; border: none !important;
+}
+[data-testid="stMarkdownContainer"] table.tbl td {
+    text-align: right; padding: 1px 5px !important; line-height: 1.3;
+    border: none !important; border-top: 1px solid #f1f5f9 !important;
+    font-variant-numeric: tabular-nums; color: #1e293b;
+}
+[data-testid="stMarkdownContainer"] table.tbl th:first-child,
+[data-testid="stMarkdownContainer"] table.tbl td:first-child { text-align: left; font-weight: 600; }
+td.up { color: #059669 !important; }
+td.dn { color: #dc2626 !important; }
+td.pct.up { background: #ecfdf5; font-weight: 600; }
+td.pct.dn { background: #fef2f2; font-weight: 600; }
+td.dim { color: #94a3b8 !important; }
 
-    [data-testid="stMain"] {
-        background: transparent;
-    }
-
-    .block-container {
-        max-width: 1440px;
-        padding-top: 2rem;
-        padding-bottom: 3rem;
-    }
-
-    [data-testid="stAppViewContainer"] h1,
-    [data-testid="stAppViewContainer"] h2,
-    [data-testid="stAppViewContainer"] h3 {
-        color: #14213d !important;
-        letter-spacing: -0.025em;
-    }
-
-    [data-testid="stMarkdownContainer"],
-    [data-testid="stMarkdownContainer"] p,
-    [data-testid="stMarkdownContainer"] li,
-    [data-testid="stMarkdownContainer"] span,
-    [data-testid="stExpander"] p,
-    [data-testid="stExpander"] span,
-    [data-testid="stAlert"] p,
-    [data-testid="stAlert"] span {
-        color: #1e293b !important;
-    }
-
-    [data-testid="stMetric"] {
-        padding: 1rem 1.15rem;
-        background: #ffffff;
-        border: 1px solid #e3eaf3;
-        border-radius: 14px;
-        box-shadow: 0 4px 14px rgba(20, 33, 61, 0.045);
-    }
-
-    [data-testid="stMetricLabel"] {
-        color: #64748b !important;
-    }
-
-    [data-testid="stMetricValue"] {
-        color: #14213d !important;
-    }
-
-    [data-testid="stDataFrame"] {
-        border: 1px solid #e3eaf3;
-        border-radius: 12px;
-        overflow: hidden;
-        box-shadow: 0 4px 14px rgba(20, 33, 61, 0.04);
-    }
-
-    [data-testid="stExpander"] {
-        background: #ffffff;
-        border: 1px solid #e3eaf3;
-        border-radius: 12px;
-    }
-
-    [data-testid="stAlert"] {
-        border-radius: 10px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+.side { display: flex; flex-direction: column; gap: 6px; }
+.card { background: #ffffff; border: 1px solid #dde5f0; border-radius: 8px; padding: 6px 8px; }
+.card h4 { margin: 0 0 3px 0; font-size: 0.72rem; color: #475569; font-weight: 700; letter-spacing: 0.02em; }
+.t5 { display: flex; align-items: center; font-size: 0.72rem; padding: 1px 0; color: #1e293b; }
+.t5 .dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.t5 .nm { font-weight: 600; width: 82px; }
+.t5 .v { margin-left: auto; font-variant-numeric: tabular-nums; }
+.breadth { display: flex; height: 9px; border-radius: 5px; overflow: hidden; background: #e2e8f0; }
+.breadth .g { background: #10b981; }
+.breadth .r { background: #ef4444; }
+.breadth .u { background: #94a3b8; }
+.legend2 { display: flex; justify-content: space-between; font-size: 0.68rem; color: #64748b; margin-top: 2px; }
+</style>
+""".replace("__FS__", str(ROW_FONT_PX)).replace("__COLS__", str(TABLE_COLUMNS))
+st.markdown(CSS, unsafe_allow_html=True)
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.ERROR)
 
 # --- Initialize Session State ---
-if 'current_data' not in st.session_state:
-    st.session_state.current_data = {}
-if 'data_received_count' not in st.session_state:
-    st.session_state.data_received_count = 0
-if 'websocket_started' not in st.session_state:
-    st.session_state.websocket_started = False
-if 'client' not in st.session_state:
-    st.session_state.client = None
-if 'instrument_details' not in st.session_state:
-    st.session_state.instrument_details = {}
-if 'scrip_codes' not in st.session_state:
-    st.session_state.scrip_codes = []
-if 'req_list' not in st.session_state:
-    st.session_state.req_list = []
-if 'websocket_status' not in st.session_state:
-    st.session_state.websocket_status = "Not Started"
-if 'last_message_time' not in st.session_state:
-    st.session_state.last_message_time = None
-if 'raw_messages' not in st.session_state:
-    st.session_state.raw_messages = []
+_defaults = {
+    'current_data': {},
+    'data_received_count': 0,
+    'websocket_started': False,
+    'client': None,
+    'instrument_details': {},
+    'scrip_codes': [],
+    'req_list': [],
+    'websocket_status': "Not Started",
+    'last_message_time': None,
+    'raw_messages': [],
+    'top5_impact_history': [],
+    'snapshot_loaded': False,
+    'data_source': "Loading...",
+    'last_rest_poll': 0.0,
+    'last_cache_save': 0.0,
+    'last_ws_restart': 0.0,
+}
+for _key, _val in _defaults.items():
+    if _key not in st.session_state:
+        st.session_state[_key] = _val
 if 'websocket_events' not in st.session_state:
     st.session_state.websocket_events = queue.Queue()
-if 'top5_impact_history' not in st.session_state:
-    st.session_state.top5_impact_history = []
 
 # --- Define paths ---
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = PROJECT_ROOT / 'config.ini'
 CSV_PATH = PROJECT_ROOT / 'nifty50_trading_data.csv'
+SNAPSHOT_PATH = PROJECT_ROOT / 'nifty50_last_snapshot.json'  # local backup of last data
 WEIGHT_ESTIMATE_AS_OF = "2026-08-04"
 NIFTY50_WEIGHT_ESTIMATES = {
-    "RELIANCE": 8.91,
-    "BHARTIARTL": 6.22,
-    "HDFCBANK": 5.80,
-    "ICICIBANK": 5.28,
-    "SBIN": 4.86,
-    "TCS": 4.51,
-    "BAJFINANCE": 3.65,
-    "LT": 2.81,
-    "HINDUNILVR": 2.49,
-    "INFY": 2.41,
-    "SUNPHARMA": 2.39,
-    "MARUTI": 2.26,
-    "TITAN": 2.23,
-    "M&M": 2.16,
-    "ADANIENT": 2.08,
-    "KOTAKBANK": 1.99,
-    "AXISBANK": 1.99,
-    "ADANIPORTS": 1.98,
-    "HCLTECH": 1.87,
-    "ITC": 1.82,
-    "ULTRACEMCO": 1.79,
-    "BAJAJFINSV": 1.69,
-    "NTPC": 1.69,
-    "BAJAJ-AUTO": 1.62,
-    "JSWSTEEL": 1.60,
-    "ONGC": 1.55,
-    "ETERNAL": 1.53,
-    "BEL": 1.46,
-    "ASIANPAINT": 1.34,
-    "POWERGRID": 1.34,
-    "COALINDIA": 1.30,
-    "SHRIRAMFIN": 1.29,
-    "TATASTEEL": 1.21,
-    "HINDALCO": 1.16,
-    "EICHERMOT": 1.11,
-    "GRASIM": 1.08,
-    "SBILIFE": 0.95,
-    "WIPRO": 0.94,
-    "JIOFIN": 0.89,
-    "TRENT": 0.83,
-    "TECHM": 0.82,
-    "APOLLOHOSP": 0.65,
-    "CIPLA": 0.60,
-    "HDFCLIFE": 0.59,
-    "TATACONSUM": 0.55,
-    "DRREDDY": 0.49,
-    # These symbols are absent from the August 2026 snapshot; use the
-    # older approximate values already present in the project.
-    "HEROMOTOCO": 0.75,
-    "INDUSINDBK": 0.77,
-    "NESTLEIND": 1.64,
-    "TATAMOTORS": 1.61,
+    "RELIANCE": 8.91, "BHARTIARTL": 6.22, "HDFCBANK": 5.80, "ICICIBANK": 5.28,
+    "SBIN": 4.86, "TCS": 4.51, "BAJFINANCE": 3.65, "LT": 2.81, "HINDUNILVR": 2.49,
+    "INFY": 2.41, "SUNPHARMA": 2.39, "MARUTI": 2.26, "TITAN": 2.23, "M&M": 2.16,
+    "ADANIENT": 2.08, "KOTAKBANK": 1.99, "AXISBANK": 1.99, "ADANIPORTS": 1.98,
+    "HCLTECH": 1.87, "ITC": 1.82, "ULTRACEMCO": 1.79, "BAJAJFINSV": 1.69,
+    "NTPC": 1.69, "BAJAJ-AUTO": 1.62, "JSWSTEEL": 1.60, "ONGC": 1.55,
+    "ETERNAL": 1.53, "BEL": 1.46, "ASIANPAINT": 1.34, "POWERGRID": 1.34,
+    "COALINDIA": 1.30, "SHRIRAMFIN": 1.29, "TATASTEEL": 1.21, "HINDALCO": 1.16,
+    "EICHERMOT": 1.11, "GRASIM": 1.08, "SBILIFE": 0.95, "WIPRO": 0.94,
+    "JIOFIN": 0.89, "TRENT": 0.83, "TECHM": 0.82, "APOLLOHOSP": 0.65,
+    "CIPLA": 0.60, "HDFCLIFE": 0.59, "TATACONSUM": 0.55, "DRREDDY": 0.49,
+    # Absent from the August 2026 snapshot; older approximate project values.
+    "HEROMOTOCO": 0.75, "INDUSINDBK": 0.77, "NESTLEIND": 1.64, "TATAMOTORS": 1.61,
 }
+
+NOTES_TEXT = (
+    f"Sorted by estimated index weight (highest first). Main weight snapshot: "
+    f"{WEIGHT_ESTIMATE_AS_OF} (third-party source); HEROMOTOCO, INDUSINDBK, NESTLEIND "
+    "and TATAMOTORS use older project estimates. Weights drift over time and the local "
+    "constituent list may not match current NIFTY 50 membership. Imp = estimated index "
+    "impact in percentage points (weight x daily % change). This is a directional market "
+    "summary, not a buy/sell recommendation."
+)
 
 # --- Load Config ---
 @st.cache_resource
 def load_config():
     config = configparser.ConfigParser()
-    
+
     if not os.path.exists(CONFIG_PATH):
-        st.error(f"❌ **config.ini file not found at:** {CONFIG_PATH}")
+        st.error(f"❌ config.ini file not found at: {CONFIG_PATH}")
         st.stop()
-    
+
     try:
         config.read(CONFIG_PATH)
-        st.success(f"✅ Config loaded from: {CONFIG_PATH}")
-        
+
         if not config.has_section('5paise_login'):
-            st.error("❌ **Missing [5paise_login] section in config.ini**")
+            st.error("❌ Missing [5paise_login] section in config.ini")
             st.stop()
-        
+
         section = "5paise_login"
-        required_keys = ["APP_NAME", "APP_SOURCE", "USER_ID", "PASSWORD", 
-                        "USER_KEY", "ENCRYPTION_KEY", "access_token", "CLIENT_CODE"]
-        
+        required_keys = ["APP_NAME", "APP_SOURCE", "USER_ID", "PASSWORD",
+                         "USER_KEY", "ENCRYPTION_KEY", "access_token", "CLIENT_CODE"]
         missing_keys = [key for key in required_keys if not config.has_option(section, key)]
-        
         if missing_keys:
-            st.error(f"❌ **Missing required keys:** {', '.join(missing_keys)}")
+            st.error(f"❌ Missing required keys: {', '.join(missing_keys)}")
             st.stop()
-        
+
         cred = {
             "APP_NAME": config.get(section, "APP_NAME"),
             "APP_SOURCE": config.get(section, "APP_SOURCE"),
@@ -236,11 +188,10 @@ def load_config():
         }
         access_token = config.get(section, "access_token")
         client_code = config.get(section, "CLIENT_CODE")
-        
         return cred, access_token, client_code
-        
+
     except Exception as e:
-        st.error(f"❌ **Config error:** {e}")
+        st.error(f"❌ Config error: {e}")
         st.stop()
 
 # --- Authenticate ---
@@ -252,57 +203,47 @@ def authenticate():
         client.set_access_token(access_token, client_code)
         return client
     except Exception as e:
-        st.error(f"❌ **Authentication error:** {e}")
+        st.error(f"❌ Authentication error: {e}")
         st.stop()
 
 # --- Load NIFTY 50 Data ---
 @st.cache_data
 def load_nifty50_data():
     if not os.path.exists(CSV_PATH):
-        st.error(f"❌ **CSV file not found:** {CSV_PATH}")
+        st.error(f"❌ CSV file not found: {CSV_PATH}")
         st.stop()
-    
+
     try:
         df = pd.read_csv(CSV_PATH)
-        st.success(f"✅ CSV loaded: {len(df)} stocks")
-        
         required_columns = ['exchange_token', 'tradingsymbol', 'name', 'exchange']
         missing_columns = [col for col in required_columns if col not in df.columns]
-        
         if missing_columns:
-            st.error(f"❌ **Missing columns:** {', '.join(missing_columns)}")
+            st.error(f"❌ Missing columns: {', '.join(missing_columns)}")
             st.stop()
-        
+
         df = df.dropna()
         df['exchange_token'] = df['exchange_token'].astype(int)
         df['tradingsymbol'] = df['tradingsymbol'].astype(str).str.strip()
         df['name'] = df['name'].astype(str).str.strip()
         df['exchange'] = df['exchange'].astype(str).str.strip()
-        
+
         instrument_details = {}
         scrip_codes = []
         req_list = []
-        
         for _, row in df.iterrows():
             scrip_code = int(row['exchange_token'])
             scrip_codes.append(scrip_code)
-            
             instrument_details[scrip_code] = {
                 'symbol': row['tradingsymbol'],
                 'name': row['name'],
                 'exchange': row['exchange']
             }
-            
-            req_list.append({
-                "Exch": "N",
-                "ExchType": "C",
-                "ScripCode": scrip_code
-            })
-        
+            req_list.append({"Exch": "N", "ExchType": "C", "ScripCode": scrip_code})
+
         return instrument_details, scrip_codes, req_list
-        
+
     except Exception as e:
-        st.error(f"❌ **Error loading CSV:** {e}")
+        st.error(f"❌ Error loading CSV: {e}")
         st.stop()
 
 # --- Start WebSocket with Better Error Handling ---
@@ -338,6 +279,22 @@ def start_websocket(client, req_list, event_queue):
         event_queue.put(("status", f"Connection Error ({type(error).__name__})"))
 
 
+def ensure_websocket():
+    if not st.session_state.websocket_started:
+        thread = threading.Thread(
+            target=start_websocket,
+            args=(
+                st.session_state.client,
+                st.session_state.req_list,
+                st.session_state.websocket_events,
+            ),
+            daemon=True,
+        )
+        thread.start()
+        st.session_state.websocket_started = True
+        st.session_state.websocket_status = "Connecting..."
+
+
 def process_websocket_events():
     event_queue = st.session_state.websocket_events
     while True:
@@ -349,7 +306,6 @@ def process_websocket_events():
         if event_type == "status":
             st.session_state.websocket_status = payload
             continue
-
         if event_type != "message":
             continue
 
@@ -382,374 +338,303 @@ def process_websocket_events():
                 st.session_state.current_data[scrip_code] = tick
                 st.session_state.data_received_count += 1
 
-# --- Format Number ---
-def format_number(num):
+
+# --- Last-close snapshot helpers ---
+def fetch_snapshot_rest(client, scrip_codes):
+    """Last known quote for every stock over REST (works when the market is closed)."""
+    result = {}
     try:
-        return f"{float(num):,.2f}"
-    except:
-        return "0.00"
+        for i in range(0, len(scrip_codes), 50):
+            chunk = scrip_codes[i:i + 50]
+            req = [{"Exch": "N", "ExchType": "C", "ScripCode": c} for c in chunk]
+            resp = client.fetch_market_feed_scrip(req)
+            rows = resp.get("Data") if isinstance(resp, dict) else None
+            for tick in rows or []:
+                try:
+                    token = int(tick.get("Token"))
+                except (TypeError, ValueError):
+                    continue
+                result[token] = tick
+    except Exception as error:
+        logging.error("Snapshot fetch failed: %s", error)
+    return result
 
 
-def style_ltp_by_change(data):
-    styles = pd.DataFrame("", index=data.index, columns=data.columns)
-    for column in ("LTP", "% Change", "Index impact (pp)"):
-        styles[column] = data["Change"].map(
-            lambda change: "color: green" if change > 0 else "color: red" if change < 0 else ""
-        )
-    return styles
+def save_cache(data):
+    try:
+        payload = {
+            "saved_at": datetime.now().isoformat(),
+            "data": {str(k): v for k, v in data.items()},
+        }
+        with open(SNAPSHOT_PATH, "w") as f:
+            json.dump(payload, f, default=str)
+    except Exception as error:
+        logging.error("Cache save failed: %s", error)
 
 
-def render_top5_impact_chart(chart_df, symbols):
-    width, height = 1000, 360
-    left, right, top, bottom = 78, 976, 38, 286
-    palette = ("#0f766e", "#2563eb", "#ea580c", "#9333ea", "#0891b2")
-    values = [
-        float(value)
-        for symbol in symbols
-        for value in chart_df[symbol].dropna()
-    ]
-    scale = max(max((abs(value) for value in values), default=0.0) * 1.15, 0.02)
-
-    def x_position(index, count):
-        return left if count <= 1 else left + index * (right - left) / (count - 1)
-
-    def y_position(value):
-        return top + (scale - value) * (bottom - top) / (2 * scale)
-
-    samples = len(chart_df)
-    parts = [
-        f'<svg viewBox="0 0 {width} {height}" role="img" '
-        'aria-label="Live five-minute estimated index impact for the top five NIFTY stocks" '
-        'style="display:block;width:100%;height:auto;font-family:Arial,sans-serif">'
-    ]
-    parts.append(
-        f'<rect x="0" y="0" width="{width}" height="{height}" rx="14" '
-        'fill="#ffffff"/>'
-    )
-    for tick in (-scale, -scale / 2, 0, scale / 2, scale):
-        y = y_position(tick)
-        stroke = "#94a3b8" if tick == 0 else "#edf1f6"
-        stroke_width = "1.5" if tick == 0 else "1"
-        parts.append(
-            f'<line x1="{left}" y1="{y:.1f}" x2="{right}" y2="{y:.1f}" '
-            f'stroke="{stroke}" stroke-width="{stroke_width}"/>'
-        )
-        parts.append(
-            f'<text x="{left - 10}" y="{y + 4:.1f}" text-anchor="end" '
-            'font-size="11" fill="#64748b">'
-            f'{tick:+.3f}</text>'
-        )
-    parts.append(
-        f'<text x="18" y="{(top + bottom) / 2:.1f}" transform="rotate(-90 18 '
-        f'{(top + bottom) / 2:.1f})" text-anchor="middle" font-size="11" '
-        'font-weight="600" fill="#475569">Estimated impact (pp)</text>'
-    )
-
-    for series_index, symbol in enumerate(symbols):
-        series = chart_df[symbol].tolist()
-        points = [
-            f'{x_position(index, samples):.1f},{y_position(float(value)):.1f}'
-            for index, value in enumerate(series)
-            if pd.notna(value)
-        ]
-        if points:
-            color = palette[series_index % len(palette)]
-            parts.append(
-                f'<polyline fill="none" stroke="{color}" stroke-width="2.7" '
-                f'stroke-linejoin="round" stroke-linecap="round" opacity="0.92" '
-                f'points="{" ".join(points)}"/>'
-            )
-            last_point = next(
-                (
-                    (index, float(value))
-                    for index, value in reversed(list(enumerate(series)))
-                    if pd.notna(value)
-                ),
-                None,
-            )
-            if last_point is not None:
-                marker_index, last_value = last_point
-                marker_x = x_position(marker_index, samples)
-                marker_y = y_position(last_value)
-                parts.append(
-                    f'<circle cx="{marker_x:.1f}" cy="{marker_y:.1f}" r="4.5" '
-                    f'fill="#ffffff" stroke="{color}" stroke-width="2.5"/>'
-                )
-            legend_x = left + series_index * 175
-            parts.append(
-                f'<line x1="{legend_x}" y1="330" x2="{legend_x + 18}" y2="330" '
-                f'stroke="{color}" stroke-width="3" stroke-linecap="round"/>'
-                f'<text x="{legend_x + 25}" y="334" font-size="11" '
-                'font-weight="600" fill="#334155">'
-                f'{escape(symbol)}</text>'
-            )
-
-    if samples:
-        parts.append(
-            f'<text x="{left}" y="307" font-size="10" fill="#94a3b8">'
-            f'{chart_df.index[0].strftime("%H:%M:%S")}</text>'
-            f'<text x="{right}" y="307" text-anchor="end" font-size="10" '
-            f'fill="#94a3b8">{chart_df.index[-1].strftime("%H:%M:%S")}</text>'
-        )
-    parts.append("</svg>")
-    return "".join(parts)
+def load_cache():
+    try:
+        if os.path.exists(SNAPSHOT_PATH):
+            with open(SNAPSHOT_PATH) as f:
+                payload = json.load(f)
+            data = {int(k): v for k, v in payload.get("data", {}).items()}
+            return data, payload.get("saved_at")
+    except Exception as error:
+        logging.error("Cache load failed: %s", error)
+    return {}, None
 
 
-# --- Check Market Hours ---
 def is_market_open():
     now = datetime.now()
+    if now.weekday() >= 5:
+        return False, "Closed (weekend)"
     current_time = now.time()
-    weekday = now.weekday()  # 0=Monday, 6=Sunday
-    
-    # Market is closed on weekends
-    if weekday >= 5:  # Saturday (5) or Sunday (6)
-        return False, "Market closed (Weekend)"
-    
-    # Market hours: 9:15 AM to 3:30 PM
     market_open = datetime.strptime("09:15", "%H:%M").time()
     market_close = datetime.strptime("15:30", "%H:%M").time()
-    
     if market_open <= current_time <= market_close:
-        return True, "Market Open"
+        return True, "Open"
     elif current_time < market_open:
-        return False, "Market not yet open"
-    else:
-        return False, "Market closed for the day"
+        return False, "Pre-open"
+    return False, "Closed"
 
-# --- Main App ---
-def main():
-    # Header
-    st.title("📊 NIFTY 50 Live Market Feed")
-    st.markdown("**Real-time market data dashboard**")
-    st.markdown("---")
-    
-    # Market Status
+
+def refresh_data(is_open):
+    """Show last-close data immediately, then switch to live ticks."""
+    if not st.session_state.snapshot_loaded:
+        snap = fetch_snapshot_rest(st.session_state.client, st.session_state.scrip_codes)
+        source = "Last close"
+        if not snap:
+            snap, saved_at = load_cache()
+            source = f"Last close (saved {saved_at[:16]})" if (snap and saved_at) else "Last close (saved)"
+        for token, tick in snap.items():
+            st.session_state.current_data.setdefault(token, tick)
+        st.session_state.data_source = source if snap else "No data"
+        st.session_state.snapshot_loaded = bool(snap)
+        st.session_state.last_rest_poll = time.time()
+
+    now_ts = time.time()
+    last_msg = st.session_state.last_message_time
+    ws_live = last_msg is not None and (datetime.now() - last_msg).total_seconds() < 20
+    if ws_live:
+        st.session_state.data_source = "Live"
+        if now_ts - st.session_state.last_cache_save > 30:
+            save_cache(st.session_state.current_data)
+            st.session_state.last_cache_save = now_ts
+    elif is_open:
+        if now_ts - st.session_state.last_rest_poll > 15:
+            snap = fetch_snapshot_rest(st.session_state.client, st.session_state.scrip_codes)
+            if snap:
+                st.session_state.current_data.update(snap)
+                st.session_state.data_source = "Live (REST)"
+                save_cache(st.session_state.current_data)
+            st.session_state.last_rest_poll = now_ts
+        ws_status = st.session_state.websocket_status
+        if (ws_status.startswith(("WebSocket Closed", "WebSocket Error", "Connection Error"))
+                and now_ts - st.session_state.last_ws_restart > 30):
+            st.session_state.websocket_started = False
+            st.session_state.last_ws_restart = now_ts
+
+
+def build_rows():
+    rows = []
+    for scrip_code in st.session_state.scrip_codes:
+        d = st.session_state.current_data.get(scrip_code, {})
+        if not d:
+            continue
+        ltp = d.get("LastRate", 0) or 0
+        prev_close = d.get("PClose", 0) or 0
+        pct = ((ltp - prev_close) / prev_close * 100) if prev_close else 0.0
+        details = st.session_state.instrument_details.get(scrip_code, {})
+        symbol = details.get('symbol', f'SCRIP_{scrip_code}')[:12]
+        weight = NIFTY50_WEIGHT_ESTIMATES.get(symbol)
+        impact = weight * pct / 100 if weight is not None else None
+        rows.append({"sym": symbol, "wt": weight, "ltp": ltp, "pct": pct, "imp": impact})
+    rows.sort(key=lambda r: (r["wt"] is None, -(r["wt"] or 0), r["sym"]))
+    return rows
+
+
+# ---------------- HTML renderers ----------------
+def chip(label, value, tone=""):
+    return f'<span class="chip {tone}">{escape(str(label))} <b>{escape(str(value))}</b></span>'
+
+
+def tone_class(value):
+    return "up" if value > 0 else "dn" if value < 0 else ""
+
+
+def render_tables_html(rows):
+    per = -(-len(rows) // TABLE_COLUMNS)  # ceiling division
+    out = ['<div class="tables">']
+    for c in range(TABLE_COLUMNS):
+        chunk = rows[c * per:(c + 1) * per]
+        if not chunk:
+            continue
+        out.append('<table class="tbl"><thead><tr><th>Stock</th><th>Wt%</th><th>LTP</th>'
+                   '<th>Chg%</th><th>Imp</th></tr></thead><tbody>')
+        for r in chunk:
+            cls = tone_class(r["pct"])
+            wt = f'{r["wt"]:.2f}' if r["wt"] is not None else "-"
+            imp = f'{r["imp"]:+.3f}' if r["imp"] is not None else "-"
+            out.append(
+                f'<tr><td>{escape(r["sym"])}</td>'
+                f'<td class="dim">{wt}</td>'
+                f'<td class="{cls}">{r["ltp"]:,.2f}</td>'
+                f'<td class="pct {cls}">{r["pct"]:+.2f}%</td>'
+                f'<td class="{cls}">{imp}</td></tr>'
+            )
+        out.append('</tbody></table>')
+    out.append('</div>')
+    return "".join(out)
+
+
+PALETTE = ("#0f766e", "#2563eb", "#ea580c", "#9333ea", "#0891b2")
+
+
+def render_chart_svg(chart_df, symbols):
+    width, height = 420, 165
+    left, right, top, bottom = 38, 412, 8, 134
+    values = [float(v) for s in symbols for v in chart_df[s].dropna()]
+    scale = max(max((abs(v) for v in values), default=0.0) * 1.15, 0.02)
+
+    def xp(i, n):
+        return left if n <= 1 else left + i * (right - left) / (n - 1)
+
+    def yp(v):
+        return top + (scale - v) * (bottom - top) / (2 * scale)
+
+    n = len(chart_df)
+    p = [f'<svg viewBox="0 0 {width} {height}" style="display:block;width:100%;height:auto;'
+         f'font-family:Arial,sans-serif">']
+    for tick in (-scale, 0, scale):
+        y = yp(tick)
+        stroke = "#94a3b8" if tick == 0 else "#edf1f6"
+        p.append(f'<line x1="{left}" y1="{y:.1f}" x2="{right}" y2="{y:.1f}" stroke="{stroke}"/>')
+        p.append(f'<text x="{left - 4}" y="{y + 3:.1f}" text-anchor="end" font-size="9" '
+                 f'fill="#64748b">{tick:+.3f}</text>')
+    for si, sym in enumerate(symbols):
+        series = chart_df[sym].tolist()
+        pts = [f'{xp(i, n):.1f},{yp(float(v)):.1f}' for i, v in enumerate(series) if pd.notna(v)]
+        if pts:
+            color = PALETTE[si % len(PALETTE)]
+            p.append(f'<polyline fill="none" stroke="{color}" stroke-width="2" '
+                     f'stroke-linejoin="round" stroke-linecap="round" points="{" ".join(pts)}"/>')
+            last = next(((i, float(v)) for i, v in reversed(list(enumerate(series))) if pd.notna(v)), None)
+            if last:
+                p.append(f'<circle cx="{xp(last[0], n):.1f}" cy="{yp(last[1]):.1f}" r="3" '
+                         f'fill="#fff" stroke="{color}" stroke-width="2"/>')
+        lx = 6 + si * 82
+        p.append(f'<rect x="{lx}" y="153" width="8" height="3" rx="1" fill="{PALETTE[si % len(PALETTE)]}"/>'
+                 f'<text x="{lx + 11}" y="157" font-size="9" font-weight="600" fill="#334155">{escape(sym)}</text>')
+    if n:
+        p.append(f'<text x="{left}" y="146" font-size="8" fill="#94a3b8">{chart_df.index[0].strftime("%H:%M:%S")}</text>'
+                 f'<text x="{right}" y="146" text-anchor="end" font-size="8" fill="#94a3b8">'
+                 f'{chart_df.index[-1].strftime("%H:%M:%S")}</text>')
+    p.append('</svg>')
+    return "".join(p)
+
+
+def update_history(rows):
+    top5 = [r for r in rows if r["wt"] is not None][:5]
+    now = datetime.now()
+    sample = {"Time": now, **{r["sym"]: r["imp"] for r in top5 if r["imp"] is not None}}
+    hist = st.session_state.top5_impact_history
+    hist.append(sample)
+    cutoff = now - timedelta(minutes=5)
+    st.session_state.top5_impact_history = [s for s in hist if s["Time"] >= cutoff][-300:]
+    chart_df = pd.DataFrame(st.session_state.top5_impact_history).set_index("Time")
+    symbols = [r["sym"] for r in top5 if r["imp"] is not None]
+    return top5, chart_df, symbols
+
+
+def live_view():
     is_open, market_status = is_market_open()
-    if is_open:
-        st.success(f"🟢 {market_status}")
-    else:
-        st.warning(f"🟡 {market_status}")
-    
-    # Enhanced Debug Information
-    with st.expander("🔍 Debug Information", expanded=True):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**File Status:**")
-            st.write(f"- Config Exists: {os.path.exists(CONFIG_PATH)}")
-            st.write(f"- CSV Exists: {os.path.exists(CSV_PATH)}")
-            st.write(f"- Current Time: {datetime.now().strftime('%H:%M:%S')}")
-            st.write(f"- Market Status: {market_status}")
-        
-        with col2:
-            st.write("**WebSocket Status:**")
-            st.write(f"- Status: {st.session_state.websocket_status}")
-            st.write(f"- Started: {st.session_state.websocket_started}")
-            st.write(f"- Last Message: {st.session_state.last_message_time}")
-            st.write(f"- Messages Received: {st.session_state.data_received_count}")
-        
-        if st.session_state.raw_messages:
-            st.write("**Recent Raw Messages:**")
-            for i, msg in enumerate(st.session_state.raw_messages[-3:], 1):
-                st.text(f"{i}: {msg}")
-    
-    # Initialize client and data
-    if st.session_state.client is None:
-        with st.spinner("🔐 Authenticating..."):
-            st.session_state.client = authenticate()
-        
-        with st.spinner("📊 Loading stock data..."):
-            st.session_state.instrument_details, st.session_state.scrip_codes, st.session_state.req_list = load_nifty50_data()
-        
-        st.success("✅ Authentication successful")
-        st.info(f"✅ Loaded {len(st.session_state.scrip_codes)} stocks")
-    
-    # Start WebSocket
-    if not st.session_state.websocket_started:
-        with st.spinner("🔌 Starting WebSocket..."):
-            websocket_thread = threading.Thread(
-                target=start_websocket,
-                args=(
-                    st.session_state.client,
-                    st.session_state.req_list,
-                    st.session_state.websocket_events,
-                ),
-                daemon=True,
-            )
-            websocket_thread.start()
-            st.session_state.websocket_started = True
-            st.session_state.websocket_status = "Connecting..."
-
+    ensure_websocket()
     process_websocket_events()
-    
-    # Status Dashboard
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("🕒 Time", datetime.now().strftime('%H:%M:%S'))
-    with col2:
-        st.metric("📈 Stocks with Data", len(st.session_state.current_data))
-    with col3:
-        st.metric("📊 Total Stocks", len(st.session_state.scrip_codes))
-    with col4:
-        st.metric("📡 Messages", st.session_state.data_received_count)
-    
-    # Data Display Logic
-    if len(st.session_state.current_data) == 0:
-        st.info("📊 Waiting for live market data...")
-        st.markdown(f"**WebSocket Status:** {st.session_state.websocket_status}")
-        
-        if not is_open:
-            st.warning("⚠️ **Market is currently closed.** Live data may not be available.")
-            st.info("💡 **During market hours (9:15 AM - 3:30 PM IST), data will appear automatically.**")
-        
-        time.sleep(2)
-        st.rerun()
-    
+    refresh_data(is_open)
+    rows = build_rows()
+
+    if not rows:
+        st.info("No data yet: last-close snapshot could not be loaded. Retrying...")
+        st.session_state.snapshot_loaded = False
+        return
+
+    gainers = sum(1 for r in rows if r["pct"] > 0)
+    losers = sum(1 for r in rows if r["pct"] < 0)
+    unch = len(rows) - gainers - losers
+    top5, chart_df, symbols = update_history(rows)
+    net = sum(r["imp"] or 0 for r in top5)
+
+    live = st.session_state.data_source.startswith("Live")
+    bias_tone = "green" if net > 0 else "red" if net < 0 else ""
+    bar = (
+        '<div class="topbar"><span class="title">📊 NIFTY 50</span>'
+        + chip("Market", market_status, "green" if is_open else "amber")
+        + chip("Data", st.session_state.data_source, "green" if live else "amber")
+        + chip("Time", datetime.now().strftime('%H:%M:%S'))
+        + chip("Stocks", f"{len(rows)}/{len(st.session_state.scrip_codes)}")
+        + chip("▲", gainers, "green") + chip("▼", losers, "red") + chip("●", unch)
+        + chip("Top-5 impact", f"{net:+.3f} pp", bias_tone)
+        + f'<span class="chip" title="{escape(NOTES_TEXT, quote=True)}">ℹ Notes</span>'
+        + '</div>'
+    )
+
+    # right-hand side panel
+    t5_rows = []
+    for i, r in enumerate(top5):
+        cls = tone_class(r["pct"])
+        color = {"up": "#059669", "dn": "#dc2626"}.get(cls, "#64748b")
+        imp = f'{r["imp"]:+.3f}' if r["imp"] is not None else "-"
+        t5_rows.append(
+            f'<div class="t5"><span class="dot" style="background:{PALETTE[i % len(PALETTE)]}"></span>'
+            f'<span class="nm">{escape(r["sym"])}</span>'
+            f'<span class="v" style="color:{color}">{r["pct"]:+.2f}%&nbsp;&nbsp;{imp}</span></div>'
+        )
+    total = max(len(rows), 1)
+    breadth = (
+        f'<div class="breadth"><div class="g" style="width:{gainers / total * 100:.1f}%"></div>'
+        f'<div class="u" style="width:{unch / total * 100:.1f}%"></div>'
+        f'<div class="r" style="width:{losers / total * 100:.1f}%"></div></div>'
+        f'<div class="legend2"><span>▲ {gainers}</span><span>● {unch}</span><span>▼ {losers}</span></div>'
+    )
+    chart = render_chart_svg(chart_df, symbols) if symbols else ""
+    side = (
+        '<div class="side">'
+        f'<div class="card"><h4>TOP 5 BY WEIGHT - IMPACT (5 MIN, pp)</h4>{chart}</div>'
+        f'<div class="card"><h4>TOP 5 NOW (Chg%  Imp)</h4>{"".join(t5_rows)}</div>'
+        f'<div class="card"><h4>MARKET BREADTH</h4>{breadth}</div>'
+        '</div>'
+    )
+
+    html = bar + '<div class="wrap">' + render_tables_html(rows) + side + '</div>'
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def main():
+    # One-time setup (runs once per browser session)
+    if st.session_state.client is None:
+        with st.spinner("Authenticating and loading stock list..."):
+            st.session_state.client = authenticate()
+            (
+                st.session_state.instrument_details,
+                st.session_state.scrip_codes,
+                st.session_state.req_list,
+            ) = load_nifty50_data()
+
+    # Refresh only the data area, in place (no full-page reload, no scroll jump)
+    if hasattr(st, "fragment"):
+        st.fragment(run_every=REFRESH_SECONDS)(live_view)()
     else:
-        # Display live data
-        st.success(f"🎉 **Live data active!** Showing {len(st.session_state.current_data)} stocks")
-        
-        # Prepare display data
-        table_data = []
-        for scrip_code in st.session_state.scrip_codes:
-            d = st.session_state.current_data.get(scrip_code, {})
-            if not d:
-                continue
-                
-            current_ltp = d.get("LastRate", 0)
-            prev_close = d.get("PClose", 0)
-            pct_change = ((current_ltp - prev_close) / prev_close * 100) if prev_close != 0 else 0
-            
-            details = st.session_state.instrument_details.get(scrip_code, {})
-            symbol = details.get('symbol', f'SCRIP_{scrip_code}')[:12]
-            weight_pct = NIFTY50_WEIGHT_ESTIMATES.get(symbol)
-            index_impact = weight_pct * pct_change / 100 if weight_pct is not None else None
-            
-            table_data.append({
-                "Symbol": symbol,
-                "Company": details.get('name', 'Unknown')[:25],
-                "Weight (est. %)": weight_pct,
-                "LTP": current_ltp,
-                "Prev Close": prev_close,
-                "High": d.get("High", 0),
-                "Low": d.get("Low", 0),
-                "% Change": pct_change,
-                "Index impact (pp)": index_impact,
-                "Volume": f"{int(d.get('Volume', 0)):,}",
-                "Change": pct_change,
-            })
-        
-        if table_data:
-            table_data.sort(
-                key=lambda row: (
-                    row["Weight (est. %)"] is None,
-                    -(row["Weight (est. %)"] or 0),
-                    row["Symbol"],
-                )
-            )
-            df = pd.DataFrame(table_data)
-            top5_data = [
-                row for row in table_data
-                if row["Weight (est. %)"] is not None
-            ][:5]
-            now = datetime.now()
-            impact_sample = {
-                "Time": now,
-                **{
-                    row["Symbol"]: row["Index impact (pp)"]
-                    for row in top5_data
-                    if row["Index impact (pp)"] is not None
-                },
-            }
-            history = st.session_state.top5_impact_history
-            history.append(impact_sample)
-            cutoff = now - timedelta(minutes=5)
-            st.session_state.top5_impact_history = [
-                sample for sample in history
-                if sample["Time"] >= cutoff
-            ][-300:]
-            chart_df = pd.DataFrame(
-                st.session_state.top5_impact_history
-            ).set_index("Time")
-            top5_symbols = [
-                row["Symbol"] for row in top5_data
-                if row["Index impact (pp)"] is not None
-            ]
-            net_impact = sum(
-                row["Index impact (pp)"] or 0 for row in top5_data
-            )
+        # Older Streamlit: redraw inside one placeholder
+        placeholder = st.empty()
+        while True:
+            with placeholder.container():
+                live_view()
+            time.sleep(REFRESH_SECONDS)
 
-            st.markdown("### 📊 Top 5 by Estimated Weight — Live Impact")
-            st.caption(
-                "Five-minute trend of each stock's estimated contribution to the "
-                "NIFTY 50 move since the previous close. Above zero is positive; "
-                "below zero is negative. Weight and contribution values are estimates."
-            )
-            if top5_symbols:
-                st.markdown(
-                    render_top5_impact_chart(chart_df, top5_symbols),
-                    unsafe_allow_html=True,
-                )
-
-            if net_impact > 0:
-                st.success(
-                    f"Positive top-5 bias: {net_impact:+.3f} pp estimated impact"
-                )
-            elif net_impact < 0:
-                st.error(
-                    f"Negative top-5 bias: {net_impact:+.3f} pp estimated impact"
-                )
-            else:
-                st.info("Top-5 bias is neutral: no net estimated contribution.")
-            st.caption(
-                "This is a directional market summary, not a buy/sell recommendation "
-                "or an entry/exit signal. Confirm with your own strategy and risk controls."
-            )
-            
-            # Main table
-            st.markdown("### 📈 Live Market Data")
-            st.caption(
-                f"Sorted by estimated index weight (highest first). Main weight snapshot: "
-                f"{WEIGHT_ESTIMATE_AS_OF} (third-party source); HEROMOTOCO, INDUSINDBK, "
-                "NESTLEIND, and TATAMOTORS use older project estimates. Weights drift "
-                "over time. The local constituent list was last updated in July 2025 "
-                "and may not match current NIFTY 50 membership. Index impact is an "
-                "estimate in percentage points (weight × daily % change)."
-            )
-            styled_df = (
-                df.style.format({
-                    "Weight (est. %)": "{:.2f}%",
-                    "LTP": "₹{:,.2f}",
-                    "Prev Close": "₹{:,.2f}",
-                    "High": "₹{:,.2f}",
-                    "Low": "₹{:,.2f}",
-                    "% Change": "{:+.2f}%",
-                    "Volume": "{}",
-                    "Index impact (pp)": "{:+.3f}",
-                }, na_rep="N/A")
-                .apply(style_ltp_by_change, axis=None)
-                .hide(axis="columns", subset=["Change"])
-            )
-            st.dataframe(styled_df, use_container_width=True, height=400)
-            
-            # Summary stats
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                gainers = len([x for x in table_data if x['Change'] > 0])
-                st.metric("🟢 Gainers", gainers)
-            with col2:
-                losers = len([x for x in table_data if x['Change'] < 0])
-                st.metric("🔴 Losers", losers)
-            with col3:
-                unchanged = len([x for x in table_data if x['Change'] == 0])
-                st.metric("⚪ Unchanged", unchanged)
-        
-        time.sleep(1)
-        st.rerun()
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        st.error(f"❌ **Error:** {e}")
+        st.error(f"❌ Error: {e}")
         st.error("Please refresh the page")
