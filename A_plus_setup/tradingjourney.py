@@ -535,9 +535,9 @@ def show_trade_entries(selected_date):
             st.session_state["editing_trade"] = None
 
     if trades:
-        widths = [2, 1, 1, 1, 1.2, 1, 1, 1.3, 3, 1]
+        widths = [2, 1, 1, 1, 1.2, 1, 1, 1.3, 3, 1, 1.4]
         headers = ["Instrument", "CE/PE", "Lots", "Lot size", "Quantity",
-                   "Buy", "Sell", "P&L", "Notes", ""]
+                   "Buy", "Sell", "P&L", "Notes", "", ""]
         for column, header in zip(st.columns(widths), headers):
             column.markdown(f"**{header}**")
         for number, trade in enumerate(trades, start=1):
@@ -558,7 +558,31 @@ def show_trade_entries(selected_date):
             for cell, value in zip(cells, values):
                 cell.write("" if value is None else value)
             is_this_row = bool(editing_trade and editing_trade.get("id") == trade["id"])
-            if cells[-1].button(
+            shot_count = len(trade.get("screenshots", []))
+            with cells[-1].popover(
+                f"📷 {shot_count}" if shot_count else "📷 Screenshot",
+                use_container_width=True,
+            ):
+                row_uploads = st.file_uploader(
+                    "Upload a screenshot for this trade",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    accept_multiple_files=True,
+                    key=f"row_up_{trade_date}_{trade['id']}",
+                )
+                if st.button("Save", key=f"row_sv_{trade_date}_{trade['id']}",
+                             disabled=not row_uploads, type="primary"):
+                    for upload in row_uploads:
+                        try:
+                            save_trade_screenshot(selected_date, trade["id"],
+                                                  upload.name, upload.getvalue())
+                        except ValueError as error:
+                            st.error(f"{upload.name}: {error}")
+                    st.rerun()
+                for shot in get_trade_screenshots(trade):
+                    if shot["path"].is_file():
+                        st.image(str(shot["path"]), caption=shot["original_name"],
+                                 use_container_width=True)
+            if cells[-2].button(
                 "Editing" if is_this_row else "Edit",
                 key=f"edit_row_{trade_date}_{trade['id']}",
                 disabled=is_this_row,
