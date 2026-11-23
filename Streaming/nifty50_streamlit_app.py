@@ -1,4 +1,8 @@
 # & '.\.venv_5paisa\Scripts\python.exe' -m streamlit run '.\Streaming\nifty50_streamlit_app.py'
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[1]))  # repo root, so Option_chain imports work anywhere
 import streamlit as st
 import configparser
 import logging
