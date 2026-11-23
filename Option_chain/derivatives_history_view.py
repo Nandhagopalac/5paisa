@@ -160,16 +160,19 @@ def render_history(path=HISTORY_PATH):
 
     top_left, top_right = st.columns([3, 2])
     top_left.markdown(line_chart(frame, "CE vs PE volume (hover for values)"), unsafe_allow_html=True)
-    recent = frame.iloc[::-1].head(12).copy()
+    recent = frame.iloc[::-1].copy()  # whole day, latest first
     recent["Time"] = recent["Time"].dt.strftime("%H:%M")
     for col in ("CE", "PE", "CE added", "PE added"):
         recent[col] = recent[col].map(
             lambda v: "" if pd.isna(v) else (_signed(v) if col.endswith("added") else format_indian(v)))
-    top_right.markdown(f"**Every {INTERVAL_MINUTES} min (latest first)**")
+    gaps = int((frame["Time"].diff() > pd.Timedelta(minutes=INTERVAL_MINUTES * 2)).sum())
+    top_right.markdown(f"**Every {INTERVAL_MINUTES} min, whole day ({len(frame)} readings, latest first)**")
+    if gaps:
+        top_right.caption(f"{gaps} gap(s) where the dashboard was not running; the change after a gap covers the whole gap.")
     top_right.dataframe(
         recent[["Time", "CE", "PE", "CE added", "PE added"]].rename(
             columns={"CE added": "CE +", "PE added": "PE +"}),
-        hide_index=True, use_container_width=True, height=215)
+        hide_index=True, use_container_width=True, height=300)
 
     left, right = st.columns(2)
     left.markdown(bar_chart(frame, ["Lead"], "Who leads (CE minus PE)"), unsafe_allow_html=True)
