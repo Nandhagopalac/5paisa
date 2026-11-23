@@ -719,16 +719,17 @@ def main():
                 st.session_state.req_list,
             ) = load_nifty50_data()
 
-    live_tab, history_tab = st.tabs(["📊 Live", "📈 Top 20 contracts history"])
+    live_area = st.container()
+    history_area = st.container()  # same page, directly below the live view
 
-    with history_tab:
+    with history_area:
         if hasattr(st, "fragment"):
             st.fragment(run_every=60)(render_history)()
         else:
             render_history()
 
     # Refresh only the data area, in place (no full-page reload, no scroll jump)
-    with live_tab:
+    with live_area:
         if hasattr(st, "fragment"):
             st.fragment(run_every=REFRESH_SECONDS)(live_view)()
         else:
