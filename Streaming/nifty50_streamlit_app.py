@@ -147,8 +147,11 @@ if 'websocket_events' not in st.session_state:
 # --- Define paths ---
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = PROJECT_ROOT / 'config.ini'
-if not CONFIG_PATH.exists() and Path('/etc/secrets/config.ini').exists():
-    CONFIG_PATH = Path('/etc/secrets/config.ini')  # Render secret file location
+for _candidate in (Path('/etc/secrets/config.ini'), CONFIG_PATH):  # Render secret file first
+    _probe = configparser.ConfigParser()
+    if _candidate.exists() and _probe.read(_candidate) and _probe.has_section('5paise_login'):
+        CONFIG_PATH = _candidate
+        break
 CSV_PATH = PROJECT_ROOT / 'nifty50_trading_data.csv'
 SNAPSHOT_PATH = PROJECT_ROOT / 'nifty50_last_snapshot.json'  # local backup of last data
 WEIGHT_ESTIMATE_AS_OF = "2026-08-04"
