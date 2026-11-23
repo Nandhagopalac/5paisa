@@ -13,13 +13,15 @@ from Option_chain.nse_equity_derivatives_volume import format_indian
 
 CE_COLOR, PE_COLOR = "#16a36a", "#e34b4b"
 GRID, TEXT = "#d9dee7", "#5b6577"
-W, LEFT, RIGHT, TOP, BOTTOM = 900, 64, 12, 12, 26
+W, LEFT, RIGHT, TOP, BOTTOM = 560, 44, 8, 8, 20
 
 
 def _nice_ticks(low, high, count=4):
     if high == low:
         high = low + 1
     step = (high - low) / count
+    if low <= 0 <= high:  # keep a tick exactly on zero
+        return [i * step for i in range(int(low // step), int(high // step) + 1)]
     return [low + step * i for i in range(count + 1)]
 
 
@@ -45,11 +47,26 @@ def _frame(height, low, high, times):
     parts = []
     for tick in _nice_ticks(low, high):
         parts.append(f'<line x1="{LEFT}" x2="{W - RIGHT}" y1="{y(tick):.1f}" y2="{y(tick):.1f}" stroke="{GRID}"/>')
-        parts.append(f'<text x="{LEFT - 6}" y="{y(tick) + 4:.1f}" text-anchor="end" font-size="11" fill="{TEXT}">{_short(tick)}</text>')
+        parts.append(f'<text x="{LEFT - 6}" y="{y(tick) + 4:.1f}" text-anchor="end" font-size="10" fill="{TEXT}">{_short(tick)}</text>')
     every = max(1, n // 8)
     for i in range(0, n, every):
-        parts.append(f'<text x="{x(i):.1f}" y="{height - 8}" text-anchor="middle" font-size="11" fill="{TEXT}">{times[i]:%H:%M}</text>')
+        parts.append(f'<text x="{x(i):.1f}" y="{height - 8}" text-anchor="middle" font-size="10" fill="{TEXT}">{times[i]:%H:%M}</text>')
     return parts, x, y
+
+
+def _hover(frame, x, height):
+    """Invisible full-height strip per reading; hovering shows every value."""
+    n = len(frame)
+    slot = (W - LEFT - RIGHT) / n
+    parts = []
+    for i, row in frame.reset_index(drop=True).iterrows():
+        text = f"{row['Time']:%H:%M}  CE {format_indian(row['CE'])}  PE {format_indian(row['PE'])}  Lead {format_indian(row['Lead'])}"
+        if pd.notna(row.get("CE added")):
+            text += f"  | in 10 min: CE {_signed(row['CE added'])}  PE {_signed(row['PE added'])}"
+        parts.append(f'<rect x="{x(i) - slot / 2:.1f}" y="{TOP}" width="{slot:.1f}" height="{height - TOP - BOTTOM}" '
+                     f'fill="#000" fill-opacity="0" onmouseover="this.setAttribute(\'fill-opacity\',0.06)" '
+                     f'onmouseout="this.setAttribute(\'fill-opacity\',0)"><title>{html.escape(text)}</title></rect>')
+    return parts
 
 
 def _wrap(title, height, parts, legend=""):
@@ -63,7 +80,7 @@ def _legend():
             f'<span style="color:{PE_COLOR}">&#9679; PE</span>')
 
 
-def line_chart(frame, title, height=260):
+def line_chart(frame, title, height=200):
     times = list(frame["Time"])
     values = list(frame["CE"]) + list(frame["PE"])
     low, high = min(values), max(values)
@@ -71,14 +88,15 @@ def line_chart(frame, title, height=260):
     parts, x, y = _frame(height, low - pad, high + pad, times)
     for column, colour in (("CE", CE_COLOR), ("PE", PE_COLOR)):
         points = " ".join(f"{x(i):.1f},{y(v):.1f}" for i, v in enumerate(frame[column]))
-        parts.append(f'<polyline points="{points}" fill="none" stroke="{colour}" stroke-width="2.5"/>')
+        parts.append(f'<polyline points="{points}" fill="none" stroke="{colour}" stroke-width="2"/>')
         for i, v in enumerate(frame[column]):
-            parts.append(f'<circle cx="{x(i):.1f}" cy="{y(v):.1f}" r="3" fill="{colour}">'
+            parts.append(f'<circle cx="{x(i):.1f}" cy="{y(v):.1f}" r="2.5" fill="{colour}">'
                          f'<title>{column} {times[i]:%H:%M}: {format_indian(v)}</title></circle>')
+    parts += _hover(frame, x, height)
     return _wrap(title, height, parts, _legend())
 
 
-def bar_chart(frame, columns, title, height=220, legend=""):
+def bar_chart(frame, columns, title, height=170, legend=""):
     """Bars per time slot; one bar per column (grouped side by side)."""
     times = list(frame["Time"])
     values = [v for c in columns for v in frame[c]]
@@ -96,6 +114,7 @@ def bar_chart(frame, columns, title, height=220, legend=""):
             parts.append(f'<rect x="{left:.1f}" y="{top:.1f}" width="{bar:.1f}" height="{max(bottom - top, 0.5):.1f}" '
                          f'fill="{colour}"><title>{column} {times[i]:%H:%M}: {format_indian(v)}</title></rect>')
     parts.append(f'<line x1="{LEFT}" x2="{W - RIGHT}" y1="{zero:.1f}" y2="{zero:.1f}" stroke="{TEXT}"/>')
+    parts += _hover(frame, x, height)
     return _wrap(title, height, parts, legend)
 
 
@@ -139,18 +158,28 @@ def render_history(path=HISTORY_PATH):
     st.caption(f"{len(frame)} readings on {day:%d %b %Y}, first {frame['Time'].iloc[0]:%H:%M}, "
                f"last {frame['Time'].iloc[-1]:%H:%M} IST.")
 
-    st.markdown(line_chart(frame, "CE vs PE volume through the day"), unsafe_allow_html=True)
+    top_left, top_right = st.columns([3, 2])
+    top_left.markdown(line_chart(frame, "CE vs PE volume (hover for values)"), unsafe_allow_html=True)
+    recent = frame.iloc[::-1].head(12).copy()
+    recent["Time"] = recent["Time"].dt.strftime("%H:%M")
+    for col in ("CE", "PE", "CE added", "PE added"):
+        recent[col] = recent[col].map(
+            lambda v: "" if pd.isna(v) else (_signed(v) if col.endswith("added") else format_indian(v)))
+    top_right.markdown(f"**Every {INTERVAL_MINUTES} min (latest first)**")
+    top_right.dataframe(
+        recent[["Time", "CE", "PE", "CE added", "PE added"]].rename(
+            columns={"CE added": "CE +", "PE added": "PE +"}),
+        hide_index=True, use_container_width=True, height=215)
 
     left, right = st.columns(2)
-    left.markdown(bar_chart(frame, ["Lead"], "Who leads (CE minus PE; green CE, red PE)"),
-                  unsafe_allow_html=True)
+    left.markdown(bar_chart(frame, ["Lead"], "Who leads (CE minus PE)"), unsafe_allow_html=True)
     changes = frame.dropna(subset=["CE added"])
     if changes.empty:
         right.caption("The change between readings appears after the second reading.")
     else:
         right.markdown(bar_chart(changes, ["CE added", "PE added"],
-                                 f"Added since the previous reading (about {INTERVAL_MINUTES} min)",
-                                 legend=_legend()), unsafe_allow_html=True)
+                                 f"Added in each {INTERVAL_MINUTES} min", legend=_legend()),
+                       unsafe_allow_html=True)
 
     with st.expander("All readings"):
         table = frame[["Time", "CE", "PE", "Lead", "CE added", "PE added"]].copy()
