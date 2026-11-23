@@ -13,7 +13,14 @@ import os
 from html import escape
 from pathlib import Path
 from Option_chain.derivatives_history import record_sample
-from Option_chain.derivatives_history_view import render_history
+try:
+    from Option_chain.derivatives_history_view import render_history
+except Exception as _history_import_error:  # keep the live dashboard working
+    _HISTORY_IMPORT_ERROR = _history_import_error
+
+    def render_history():
+        st.error(f"History charts could not load: {_HISTORY_IMPORT_ERROR}")
+        st.code("pip install -r requirements.txt")
 from Option_chain.nse_equity_derivatives_volume import (
     fetch_market_data,
     format_indian,
