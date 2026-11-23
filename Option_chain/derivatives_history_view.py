@@ -1,5 +1,10 @@
-"""Streamlit view: CE vs PE volume of NSE's top 20 contracts over time."""
-import altair as alt
+"""Streamlit view: CE vs PE volume of NSE's top 20 contracts over time.
+
+Charts are drawn as inline SVG so they do not depend on altair/vega
+(which breaks on some Python/library combinations).
+"""
+import html
+
 import pandas as pd
 import streamlit as st
 
@@ -7,10 +12,91 @@ from Option_chain.derivatives_history import HISTORY_PATH, INTERVAL_MINUTES, loa
 from Option_chain.nse_equity_derivatives_volume import format_indian
 
 CE_COLOR, PE_COLOR = "#16a36a", "#e34b4b"
+GRID, TEXT = "#d9dee7", "#5b6577"
+W, LEFT, RIGHT, TOP, BOTTOM = 900, 64, 12, 12, 26
 
 
-def _time_axis():
-    return alt.Axis(format="%H:%M", labelAngle=0, title=None, grid=False)
+def _nice_ticks(low, high, count=4):
+    if high == low:
+        high = low + 1
+    step = (high - low) / count
+    return [low + step * i for i in range(count + 1)]
+
+
+def _short(value):
+    value = float(value)
+    for limit, suffix in ((1e7, "Cr"), (1e5, "L"), (1e3, "K")):
+        if abs(value) >= limit:
+            return f"{value / limit:.1f}".rstrip("0").rstrip(".") + suffix
+    return f"{value:.0f}"
+
+
+def _frame(height, low, high, times):
+    """Axes, grid and time labels. Returns (svg_parts, x(i), y(v))."""
+    n = len(times)
+    inner_w, inner_h = W - LEFT - RIGHT, height - TOP - BOTTOM
+
+    def x(i):
+        return LEFT + (inner_w * (i + 0.5) / n)
+
+    def y(v):
+        return TOP + inner_h * (1 - (v - low) / (high - low))
+
+    parts = []
+    for tick in _nice_ticks(low, high):
+        parts.append(f'<line x1="{LEFT}" x2="{W - RIGHT}" y1="{y(tick):.1f}" y2="{y(tick):.1f}" stroke="{GRID}"/>')
+        parts.append(f'<text x="{LEFT - 6}" y="{y(tick) + 4:.1f}" text-anchor="end" font-size="11" fill="{TEXT}">{_short(tick)}</text>')
+    every = max(1, n // 8)
+    for i in range(0, n, every):
+        parts.append(f'<text x="{x(i):.1f}" y="{height - 8}" text-anchor="middle" font-size="11" fill="{TEXT}">{times[i]:%H:%M}</text>')
+    return parts, x, y
+
+
+def _wrap(title, height, parts, legend=""):
+    svg = (f'<svg viewBox="0 0 {W} {height}" width="100%" xmlns="http://www.w3.org/2000/svg" '
+           f'style="font-family:sans-serif">{"".join(parts)}</svg>')
+    return f'<div style="margin:6px 0 14px"><b>{html.escape(title)}</b> {legend}{svg}</div>'
+
+
+def _legend():
+    return (f'<span style="color:{CE_COLOR}">&#9679; CE</span> '
+            f'<span style="color:{PE_COLOR}">&#9679; PE</span>')
+
+
+def line_chart(frame, title, height=260):
+    times = list(frame["Time"])
+    values = list(frame["CE"]) + list(frame["PE"])
+    low, high = min(values), max(values)
+    pad = (high - low) * 0.08 or 1
+    parts, x, y = _frame(height, low - pad, high + pad, times)
+    for column, colour in (("CE", CE_COLOR), ("PE", PE_COLOR)):
+        points = " ".join(f"{x(i):.1f},{y(v):.1f}" for i, v in enumerate(frame[column]))
+        parts.append(f'<polyline points="{points}" fill="none" stroke="{colour}" stroke-width="2.5"/>')
+        for i, v in enumerate(frame[column]):
+            parts.append(f'<circle cx="{x(i):.1f}" cy="{y(v):.1f}" r="3" fill="{colour}">'
+                         f'<title>{column} {times[i]:%H:%M}: {format_indian(v)}</title></circle>')
+    return _wrap(title, height, parts, _legend())
+
+
+def bar_chart(frame, columns, title, height=220, legend=""):
+    """Bars per time slot; one bar per column (grouped side by side)."""
+    times = list(frame["Time"])
+    values = [v for c in columns for v in frame[c]]
+    low, high = min(0, min(values)), max(0, max(values))
+    parts, x, y = _frame(height, low, high, times)
+    slot = (W - LEFT - RIGHT) / len(times)
+    bar = max(2.0, slot * 0.8 / len(columns))
+    zero = y(0)
+    for k, column in enumerate(columns):
+        for i, v in enumerate(frame[column]):
+            colour = (CE_COLOR if v > 0 else PE_COLOR) if len(columns) == 1 \
+                else (CE_COLOR if column.startswith("CE") else PE_COLOR)
+            left = x(i) - bar * len(columns) / 2 + k * bar
+            top, bottom = sorted((y(v), zero))
+            parts.append(f'<rect x="{left:.1f}" y="{top:.1f}" width="{bar:.1f}" height="{max(bottom - top, 0.5):.1f}" '
+                         f'fill="{colour}"><title>{column} {times[i]:%H:%M}: {format_indian(v)}</title></rect>')
+    parts.append(f'<line x1="{LEFT}" x2="{W - RIGHT}" y1="{zero:.1f}" y2="{zero:.1f}" stroke="{TEXT}"/>')
+    return _wrap(title, height, parts, legend)
 
 
 def _signed(value):
@@ -53,48 +139,18 @@ def render_history(path=HISTORY_PATH):
     st.caption(f"{len(frame)} readings on {day:%d %b %Y}, first {frame['Time'].iloc[0]:%H:%M}, "
                f"last {frame['Time'].iloc[-1]:%H:%M} IST.")
 
-    lines = frame.melt("Time", ["CE", "PE"], var_name="Side", value_name="Contracts")
-    colours = alt.Scale(domain=["CE", "PE"], range=[CE_COLOR, PE_COLOR])
-    volume_chart = (
-        alt.Chart(lines).mark_line(point=True, strokeWidth=2.5)
-        .encode(x=alt.X("Time:T", axis=_time_axis()),
-                y=alt.Y("Contracts:Q", title="Contracts (cumulative)", scale=alt.Scale(zero=False)),
-                color=alt.Color("Side:N", scale=colours, legend=alt.Legend(orient="top", title=None)),
-                tooltip=[alt.Tooltip("Time:T", format="%H:%M"), "Side:N",
-                         alt.Tooltip("Contracts:Q", format=",.0f")])
-        .properties(height=260, title="CE vs PE volume through the day")
-    )
-    st.altair_chart(volume_chart, use_container_width=True)
+    st.markdown(line_chart(frame, "CE vs PE volume through the day"), unsafe_allow_html=True)
 
     left, right = st.columns(2)
-    lead_chart = (
-        alt.Chart(frame).mark_bar()
-        .encode(x=alt.X("Time:T", axis=_time_axis()),
-                y=alt.Y("Lead:Q", title="CE minus PE"),
-                color=alt.condition(alt.datum.Lead > 0, alt.value(CE_COLOR), alt.value(PE_COLOR)),
-                tooltip=[alt.Tooltip("Time:T", format="%H:%M"),
-                         alt.Tooltip("Lead:Q", format=",.0f", title="CE minus PE")])
-        .properties(height=220, title="Who leads at each reading (green: CE, red: PE)")
-    )
-    left.altair_chart(lead_chart, use_container_width=True)
-
-    added = frame.dropna(subset=["CE added"]).melt("Time", ["CE added", "PE added"],
-                                                  var_name="Side", value_name="Added")
-    added["Side"] = added["Side"].str.replace(" added", "", regex=False)
-    added["Slot"] = added["Time"].dt.strftime("%H:%M")
-    if added.empty:
+    left.markdown(bar_chart(frame, ["Lead"], "Who leads (CE minus PE; green CE, red PE)"),
+                  unsafe_allow_html=True)
+    changes = frame.dropna(subset=["CE added"])
+    if changes.empty:
         right.caption("The change between readings appears after the second reading.")
     else:
-        change_chart = (
-            alt.Chart(added).mark_bar()
-            .encode(x=alt.X("Slot:O", sort=None, axis=alt.Axis(labelAngle=-90, title=None, labelOverlap=True)),
-                    xOffset="Side:N",
-                    y=alt.Y("Added:Q", title="Contracts added"),
-                    color=alt.Color("Side:N", scale=colours, legend=None),
-                    tooltip=["Slot:O", "Side:N", alt.Tooltip("Added:Q", format=",.0f")])
-            .properties(height=220, title=f"Added since the previous reading (about {INTERVAL_MINUTES} min)")
-        )
-        right.altair_chart(change_chart, use_container_width=True)
+        right.markdown(bar_chart(changes, ["CE added", "PE added"],
+                                 f"Added since the previous reading (about {INTERVAL_MINUTES} min)",
+                                 legend=_legend()), unsafe_allow_html=True)
 
     with st.expander("All readings"):
         table = frame[["Time", "CE", "PE", "Lead", "CE added", "PE added"]].copy()
