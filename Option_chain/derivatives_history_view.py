@@ -13,7 +13,7 @@ from Option_chain.nse_equity_derivatives_volume import format_indian
 
 CE_COLOR, PE_COLOR = "#16a36a", "#e34b4b"
 GRID, TEXT = "#d9dee7", "#5b6577"
-W, LEFT, RIGHT, TOP, BOTTOM = 560, 44, 8, 8, 20
+W, LEFT, RIGHT, TOP, BOTTOM = 520, 44, 8, 8, 20
 
 
 def _nice_ticks(low, high, count=4):
@@ -80,7 +80,7 @@ def _legend():
             f'<span style="color:{PE_COLOR}">&#9679; PE</span>')
 
 
-def line_chart(frame, title, height=200):
+def line_chart(frame, title, height=150):
     times = list(frame["Time"])
     values = list(frame["CE"]) + list(frame["PE"])
     low, high = min(values), max(values)
@@ -96,7 +96,7 @@ def line_chart(frame, title, height=200):
     return _wrap(title, height, parts, _legend())
 
 
-def bar_chart(frame, columns, title, height=170, legend=""):
+def bar_chart(frame, columns, title, height=120, legend=""):
     """Bars per time slot; one bar per column (grouped side by side)."""
     times = list(frame["Time"])
     values = [v for c in columns for v in frame[c]]
@@ -123,8 +123,18 @@ def _signed(value):
 
 
 def render_history(path=HISTORY_PATH):
+    with st.container(key="history"):
+        _render(path)
+
+
+def _render(path):
     history = load_history(path)
-    st.markdown("#### NSE equity derivatives · Top 20 contracts · history")
+    st.markdown(
+        "<style>div[class*='st-key-history'] [data-testid='stMetricValue']{font-size:1.25rem}"
+        "div[class*='st-key-history'] [data-testid='stMetricDelta']{font-size:.75rem}"
+        "div[class*='st-key-history'] [data-testid='stMetric']{padding:0}</style>",
+        unsafe_allow_html=True)
+    st.markdown("##### NSE equity derivatives · Top 20 contracts · history")
     if history.empty:
         st.info(
             f"No history saved yet. A reading is saved about every {INTERVAL_MINUTES} minutes "
@@ -172,7 +182,7 @@ def render_history(path=HISTORY_PATH):
     top_right.dataframe(
         recent[["Time", "CE", "PE", "CE added", "PE added"]].rename(
             columns={"CE added": "CE +", "PE added": "PE +"}),
-        hide_index=True, use_container_width=True, height=300)
+        hide_index=True, use_container_width=True, height=210)
 
     left, right = st.columns(2)
     left.markdown(bar_chart(frame, ["Lead"], "Who leads (CE minus PE)"), unsafe_allow_html=True)
