@@ -12,6 +12,8 @@ import pandas as pd
 import os
 from html import escape
 from pathlib import Path
+from Option_chain.derivatives_history import record_sample
+from Option_chain.derivatives_history_view import render_history
 from Option_chain.nse_equity_derivatives_volume import (
     fetch_market_data,
     format_indian,
@@ -561,6 +563,10 @@ def render_derivatives_volume():
         try:
             st.session_state.nse_derivatives_data = fetch_market_data()
             st.session_state.nse_derivatives_error = None
+            try:
+                record_sample(*st.session_state.nse_derivatives_data)  # saves one reading per 10 min
+            except OSError as error:
+                st.session_state.nse_derivatives_error = f"Could not save history: {error}"
         except RuntimeError as error:
             st.session_state.nse_derivatives_error = str(error)
 
@@ -706,16 +712,25 @@ def main():
                 st.session_state.req_list,
             ) = load_nifty50_data()
 
+    live_tab, history_tab = st.tabs(["📊 Live", "📈 Top 20 contracts history"])
+
+    with history_tab:
+        if hasattr(st, "fragment"):
+            st.fragment(run_every=60)(render_history)()
+        else:
+            render_history()
+
     # Refresh only the data area, in place (no full-page reload, no scroll jump)
-    if hasattr(st, "fragment"):
-        st.fragment(run_every=REFRESH_SECONDS)(live_view)()
-    else:
-        # Older Streamlit: redraw inside one placeholder
-        placeholder = st.empty()
-        while True:
-            with placeholder.container():
-                live_view()
-            time.sleep(REFRESH_SECONDS)
+    with live_tab:
+        if hasattr(st, "fragment"):
+            st.fragment(run_every=REFRESH_SECONDS)(live_view)()
+        else:
+            # Older Streamlit: redraw inside one placeholder
+            placeholder = st.empty()
+            while True:
+                with placeholder.container():
+                    live_view()
+                time.sleep(REFRESH_SECONDS)
 
 
 if __name__ == "__main__":
