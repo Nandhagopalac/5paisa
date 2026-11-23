@@ -1,0 +1,18 @@
+# Render Blueprint: New > Blueprint > pick this repo.
+services:
+  - type: web
+    name: nifty-dashboard
+    runtime: python
+    plan: starter            # free plan sleeps and has no persistent disk, so history would be lost
+    region: singapore        # closest Render region to India
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start_render.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: TZ
+        value: Asia/Kolkata
+    disk:
+      name: history
+      mountPath: /opt/render/project/src/data/history
+      sizeGB: 1
