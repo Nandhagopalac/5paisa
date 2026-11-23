@@ -147,6 +147,8 @@ if 'websocket_events' not in st.session_state:
 # --- Define paths ---
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = PROJECT_ROOT / 'config.ini'
+if not CONFIG_PATH.exists() and Path('/etc/secrets/config.ini').exists():
+    CONFIG_PATH = Path('/etc/secrets/config.ini')  # Render secret file location
 CSV_PATH = PROJECT_ROOT / 'nifty50_trading_data.csv'
 SNAPSHOT_PATH = PROJECT_ROOT / 'nifty50_last_snapshot.json'  # local backup of last data
 WEIGHT_ESTIMATE_AS_OF = "2026-08-04"
@@ -188,7 +190,7 @@ def load_config():
         config.read(CONFIG_PATH)
 
         if not config.has_section('5paise_login'):
-            st.error("❌ Missing [5paise_login] section in config.ini")
+            st.error(f"❌ Missing [5paise_login] section in {CONFIG_PATH}. Sections found: {config.sections() or 'none (file empty?)'}")
             st.stop()
 
         section = "5paise_login"
