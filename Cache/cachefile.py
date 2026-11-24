@@ -1,3 +1,5 @@
+# This downloads a fresh scrip master from 5paisa
+# .\.venv_5paisa\Scripts\python.exe .\Cache\cachefile.py --refresh-cache
 import argparse
 import configparser
 from html import escape
@@ -12,12 +14,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = Path(__file__).resolve().parent
 SCRIP_MASTER_CACHE = PROJECT_ROOT / "scrip_master.csv"
 
-target_strike = 25200
-target_expiry = pd.to_datetime("2026-11-23")
+target_strike = 25400
+target_expiry = pd.to_datetime("2026-12-01")
 underlying = "NIFTY"
 option_types = ("CE", "PE")
 itm_strike_step = 100
-itm_strikes_per_side = 5
+itm_strikes_per_side = 2
 
 REQUIRED_COLUMNS = {
     "Exch",
