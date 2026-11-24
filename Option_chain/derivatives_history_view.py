@@ -80,7 +80,7 @@ def _legend():
             f'<span style="color:{PE_COLOR}">&#9679; PE</span>')
 
 
-def line_chart(frame, title, height=150):
+def line_chart(frame, title, height=140):
     times = list(frame["Time"])
     values = list(frame["CE"]) + list(frame["PE"])
     low, high = min(values), max(values)
@@ -96,7 +96,7 @@ def line_chart(frame, title, height=150):
     return _wrap(title, height, parts, _legend())
 
 
-def bar_chart(frame, columns, title, height=120, legend=""):
+def bar_chart(frame, columns, title, height=140, legend=""):
     """Bars per time slot; one bar per column (grouped side by side)."""
     times = list(frame["Time"])
     values = [v for c in columns for v in frame[c]]
@@ -130,11 +130,11 @@ def render_history(path=HISTORY_PATH):
 def _render(path):
     history = load_history(path)
     st.markdown(
-        "<style>div[class*='st-key-history'] [data-testid='stMetricValue']{font-size:1.25rem}"
-        "div[class*='st-key-history'] [data-testid='stMetricDelta']{font-size:.75rem}"
+        "<style>div[class*='st-key-history'] [data-testid='stMetricValue']{font-size:1.05rem}"
+        "div[class*='st-key-history'] [data-testid='stMetricDelta']{font-size:.7rem}"
         "div[class*='st-key-history'] [data-testid='stMetric']{padding:0}</style>",
         unsafe_allow_html=True)
-    st.markdown("##### NSE equity derivatives · Top 20 contracts · history")
+    st.markdown("**NSE equity derivatives · Top 20 contracts · history**")
     if history.empty:
         st.info(
             f"No history saved yet. A reading is saved about every {INTERVAL_MINUTES} minutes "
@@ -144,7 +144,7 @@ def _render(path):
         return
 
     days = sorted(history["Time"].dt.date.unique(), reverse=True)
-    picker, summary = st.columns([1, 4])
+    picker, summary = st.columns([1, 5])
     day = picker.selectbox("Day", days, format_func=lambda d: f"{d:%a %d %b %Y}", key="history_day")
     frame = history[history["Time"].dt.date == day].reset_index(drop=True)
     frame["CE added"] = frame["CE"].diff()
@@ -168,31 +168,29 @@ def _render(path):
     st.caption(f"{len(frame)} readings on {day:%d %b %Y}, first {frame['Time'].iloc[0]:%H:%M}, "
                f"last {frame['Time'].iloc[-1]:%H:%M} IST.")
 
-    top_left, top_right = st.columns([3, 2])
-    top_left.markdown(line_chart(frame, "CE vs PE volume (hover for values)"), unsafe_allow_html=True)
+    c_line, c_lead, c_added, c_table = st.columns(4)
+    c_line.markdown(line_chart(frame, "CE vs PE volume"), unsafe_allow_html=True)
+    c_lead.markdown(bar_chart(frame, ["Lead"], "Who leads (CE − PE)"), unsafe_allow_html=True)
+    changes = frame.dropna(subset=["CE added"])
+    if changes.empty:
+        c_added.caption("The change between readings appears after the second reading.")
+    else:
+        c_added.markdown(bar_chart(changes, ["CE added", "PE added"],
+                                   f"Added in each {INTERVAL_MINUTES} min", legend=_legend()),
+                         unsafe_allow_html=True)
+
     recent = frame.iloc[::-1].copy()  # whole day, latest first
     recent["Time"] = recent["Time"].dt.strftime("%H:%M")
     for col in ("CE", "PE", "CE added", "PE added"):
         recent[col] = recent[col].map(
             lambda v: "" if pd.isna(v) else (_signed(v) if col.endswith("added") else format_indian(v)))
     gaps = int((frame["Time"].diff() > pd.Timedelta(minutes=INTERVAL_MINUTES * 2)).sum())
-    top_right.markdown(f"**Every {INTERVAL_MINUTES} min, whole day ({len(frame)} readings, latest first)**")
-    if gaps:
-        top_right.caption(f"{gaps} gap(s) where the dashboard was not running; the change after a gap covers the whole gap.")
-    top_right.dataframe(
+    c_table.markdown(f"**Every {INTERVAL_MINUTES} min** ({len(frame)} readings"
+                     + (f", {gaps} gap(s) when the dashboard was off" if gaps else "") + ")")
+    c_table.dataframe(
         recent[["Time", "CE", "PE", "CE added", "PE added"]].rename(
             columns={"CE added": "CE +", "PE added": "PE +"}),
-        hide_index=True, use_container_width=True, height=210)
-
-    left, right = st.columns(2)
-    left.markdown(bar_chart(frame, ["Lead"], "Who leads (CE minus PE)"), unsafe_allow_html=True)
-    changes = frame.dropna(subset=["CE added"])
-    if changes.empty:
-        right.caption("The change between readings appears after the second reading.")
-    else:
-        right.markdown(bar_chart(changes, ["CE added", "PE added"],
-                                 f"Added in each {INTERVAL_MINUTES} min", legend=_legend()),
-                       unsafe_allow_html=True)
+        hide_index=True, use_container_width=True, height=170)
 
     with st.expander("All readings"):
         table = frame[["Time", "CE", "PE", "Lead", "CE added", "PE added"]].copy()
