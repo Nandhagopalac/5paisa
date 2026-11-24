@@ -1,0 +1,4 @@
+# The dashboards use a light page with fixed colours, so force Streamlit's light theme
+# (otherwise a dark browser/system theme makes text and tables unreadable).
+[theme]
+base = "light"
