@@ -6,8 +6,8 @@ Synthetic future (put-call parity) for one expiry, taken at the ATM strike:
 
 (If CE > PE this is strike + (CE - PE); if PE > CE it is strike - (PE - CE).)
 
-For any strike you monitor, the premium is split into
-    intrinsic value = how far the option is in the money
+For any strike you monitor, the premium is split (against that strike's own synthetic future)
+    intrinsic value = |CE - PE|, on the leg with the higher premium (the ITM leg)
     extrinsic value = premium - intrinsic  (time value, which melts as expiry nears)
 
 One reading is saved per 5-minute slot between 09:15 and 15:30 IST into
@@ -54,16 +54,23 @@ def synthetic_future(strike, ce, pe):
     return float(strike) + float(ce) - float(pe)
 
 
-def leg_values(spot, strike, ce, pe):
-    """Intrinsic and extrinsic (time) value of the CE and PE at one strike."""
-    ce_intrinsic = max(float(spot) - strike, 0.0)
-    pe_intrinsic = max(strike - float(spot), 0.0)
-    ce_extrinsic = float(ce) - ce_intrinsic
-    pe_extrinsic = float(pe) - pe_intrinsic
+def leg_values(strike, ce, pe):
+    """Intrinsic / extrinsic split of one strike, measured against the synthetic future.
+
+    future = strike + CE - PE.  The leg with the higher premium is in the money (ITM) and its
+    intrinsic value is |CE - PE| (= future - strike for a call, strike - future for a put).
+    Extrinsic = premium - intrinsic, so both legs end up with the same extrinsic value
+    (the cheaper leg's premium), e.g. strike 25350, CE 270.00, PE 229.95:
+    CE intrinsic 40.05, CE extrinsic 229.95, PE intrinsic 0, PE extrinsic 229.95.
+    """
+    ce, pe = float(ce), float(pe)
+    diff = ce - pe
+    ce_intrinsic, pe_intrinsic = max(diff, 0.0), max(-diff, 0.0)
+    ce_extrinsic, pe_extrinsic = ce - ce_intrinsic, pe - pe_intrinsic
     return {
         "ce_intrinsic": ce_intrinsic, "ce_extrinsic": ce_extrinsic,
         "pe_intrinsic": pe_intrinsic, "pe_extrinsic": pe_extrinsic,
-        "straddle": float(ce) + float(pe),
+        "straddle": ce + pe,
         "total_extrinsic": ce_extrinsic + pe_extrinsic,
     }
 
@@ -172,7 +179,7 @@ def take_reading(client, contracts, expiry, mode="ATM", fixed_strike=None,
         "atm_ce": atm_ce, "atm_pe": atm_pe, "synthetic": synthetic,
         "basis": synthetic - spot, "mode": mode, "strike": strike, "ce": ce, "pe": pe,
     }
-    reading.update(leg_values(spot, strike, ce, pe))
+    reading.update(leg_values(strike, ce, pe))
     return reading
 
 

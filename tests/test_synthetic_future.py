@@ -44,14 +44,21 @@ class CalculationTests(unittest.TestCase):
         self.assertEqual(sf.synthetic_future(25200, 150, 120), 25230)  # CE leads: strike + diff
         self.assertEqual(sf.synthetic_future(25200, 100, 130), 25170)  # PE leads: strike - diff
 
-    def test_intrinsic_and_extrinsic(self):
-        v = sf.leg_values(25230, 25200, 70, 40)
-        self.assertEqual(v["ce_intrinsic"], 30)
-        self.assertEqual(v["ce_extrinsic"], 40)
+    def test_intrinsic_and_extrinsic_against_synthetic_future(self):
+        v = sf.leg_values(25350, 270.00, 229.95)   # CE leads: call is ITM
+        self.assertAlmostEqual(v["ce_intrinsic"], 40.05)
+        self.assertAlmostEqual(v["ce_extrinsic"], 229.95)
         self.assertEqual(v["pe_intrinsic"], 0)
-        self.assertEqual(v["pe_extrinsic"], 40)
-        self.assertEqual(v["straddle"], 110)
-        self.assertEqual(v["total_extrinsic"], 80)
+        self.assertAlmostEqual(v["pe_extrinsic"], 229.95)
+        self.assertAlmostEqual(v["straddle"], 499.95)
+        self.assertAlmostEqual(v["total_extrinsic"], 459.90)
+        w = sf.leg_values(25200, 345, 172)          # reference table: future 25373
+        self.assertEqual(w["ce_intrinsic"], 173)
+        self.assertEqual(w["ce_extrinsic"], 172)
+        self.assertEqual(sf.synthetic_future(25200, 345, 172), 25373)
+        p = sf.leg_values(25200, 100, 130)          # PE leads: put is ITM
+        self.assertEqual((p["ce_intrinsic"], p["pe_intrinsic"], p["ce_extrinsic"], p["pe_extrinsic"]),
+                         (0, 30, 100, 100))
 
     def test_expiries_and_codes(self):
         contracts = make_contracts()
@@ -76,7 +83,7 @@ class ReadingTests(unittest.TestCase):
                             mode="FIXED", fixed_strike=25100, now=datetime(2026, 12, 1, 10, 0))
         self.assertEqual(r["atm"], 25250)
         self.assertEqual(r["strike"], 25100)
-        self.assertEqual(r["ce_intrinsic"], 130)
+        self.assertAlmostEqual(r["ce_intrinsic"], 130)
 
     def test_missing_contracts_gives_clear_error(self):
         with self.assertRaises(RuntimeError):
