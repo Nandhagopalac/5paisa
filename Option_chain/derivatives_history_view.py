@@ -33,7 +33,7 @@ def _short(value):
     return f"{value:.0f}"
 
 
-def _frame(height, low, high, times):
+def _frame(height, low, high, times, fmt=None):
     """Axes, grid and time labels. Returns (svg_parts, x(i), y(v))."""
     n = len(times)
     inner_w, inner_h = W - LEFT - RIGHT, height - TOP - BOTTOM
@@ -47,7 +47,7 @@ def _frame(height, low, high, times):
     parts = []
     for tick in _nice_ticks(low, high):
         parts.append(f'<line x1="{LEFT}" x2="{W - RIGHT}" y1="{y(tick):.1f}" y2="{y(tick):.1f}" stroke="{GRID}"/>')
-        parts.append(f'<text x="{LEFT - 6}" y="{y(tick) + 4:.1f}" text-anchor="end" font-size="10" fill="{TEXT}">{_short(tick)}</text>')
+        parts.append(f'<text x="{LEFT - 6}" y="{y(tick) + 4:.1f}" text-anchor="end" font-size="10" fill="{TEXT}">{(fmt or _short)(tick)}</text>')
     every = max(1, n // 8)
     for i in range(0, n, every):
         parts.append(f'<text x="{x(i):.1f}" y="{height - 8}" text-anchor="middle" font-size="10" fill="{TEXT}">{times[i]:%H:%M}</text>')

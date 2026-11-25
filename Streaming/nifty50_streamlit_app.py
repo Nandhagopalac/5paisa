@@ -25,6 +25,13 @@ except Exception as _history_import_error:  # keep the live dashboard working
     def render_history():
         st.error(f"History charts could not load: {_HISTORY_IMPORT_ERROR}")
         st.code("pip install -r requirements.txt")
+try:
+    from Option_chain.synthetic_future_view import render_synthetic_tab
+except Exception as _synthetic_import_error:  # keep the live dashboard working
+    _SYNTHETIC_IMPORT_ERROR = _synthetic_import_error
+
+    def render_synthetic_tab(_client):
+        st.error(f"Synthetic future tab could not load: {_SYNTHETIC_IMPORT_ERROR}")
 from Option_chain.nse_equity_derivatives_volume import (
     fetch_market_data,
     format_indian,
@@ -728,26 +735,32 @@ def main():
                 st.session_state.req_list,
             ) = load_nifty50_data()
 
-    live_area = st.container()
-    history_area = st.container()  # same page, directly below the live view
+    live_tab, synthetic_tab = st.tabs(["📊 Live", "🧭 Synthetic future & strike monitor"])
 
-    with history_area:
-        if hasattr(st, "fragment"):
-            st.fragment(run_every=60)(render_history)()
-        else:
-            render_history()
+    with synthetic_tab:
+        render_synthetic_tab(st.session_state.client)
 
-    # Refresh only the data area, in place (no full-page reload, no scroll jump)
-    with live_area:
-        if hasattr(st, "fragment"):
-            st.fragment(run_every=REFRESH_SECONDS)(live_view)()
-        else:
-            # Older Streamlit: redraw inside one placeholder
-            placeholder = st.empty()
-            while True:
-                with placeholder.container():
-                    live_view()
-                time.sleep(REFRESH_SECONDS)
+    with live_tab:
+        live_area = st.container()
+        history_area = st.container()  # same page, directly below the live view
+
+        with history_area:
+            if hasattr(st, "fragment"):
+                st.fragment(run_every=60)(render_history)()
+            else:
+                render_history()
+
+        # Refresh only the data area, in place (no full-page reload, no scroll jump)
+        with live_area:
+            if hasattr(st, "fragment"):
+                st.fragment(run_every=REFRESH_SECONDS)(live_view)()
+            else:
+                # Older Streamlit: redraw inside one placeholder
+                placeholder = st.empty()
+                while True:
+                    with placeholder.container():
+                        live_view()
+                    time.sleep(REFRESH_SECONDS)
 
 
 if __name__ == "__main__":
