@@ -39,6 +39,13 @@ except Exception as _panel_import_error:  # keep the live dashboard working
 
     def render_panel_tab(_client):
         st.error(f"Synthetic future table could not load: {_PANEL_IMPORT_ERROR}")
+try:
+    from Option_chain.synthetic_future_oi import render_oi_tab
+except Exception as _oi_import_error:  # keep the live dashboard working
+    _OI_IMPORT_ERROR = _oi_import_error
+
+    def render_oi_tab(_client):
+        st.error(f"Cumulative OI table could not load: {_OI_IMPORT_ERROR}")
 from Option_chain.nse_equity_derivatives_volume import (
     fetch_market_data,
     format_indian,
@@ -742,11 +749,15 @@ def main():
                 st.session_state.req_list,
             ) = load_nifty50_data()
 
-    live_tab, synthetic_tab, panel_tab = st.tabs(
-        ["📊 Live", "🧭 Synthetic future & strike monitor", "🧮 Synthetic future table"])
+    live_tab, synthetic_tab, panel_tab, oi_tab = st.tabs(
+        ["📊 Live", "🧭 Synthetic future & strike monitor", "🧮 Synthetic future table",
+         "📈 Cumulative OI"])
 
     with panel_tab:
         render_panel_tab(st.session_state.client)
+
+    with oi_tab:
+        render_oi_tab(st.session_state.client)
 
     with synthetic_tab:
         render_synthetic_tab(st.session_state.client)
