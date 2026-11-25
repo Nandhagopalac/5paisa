@@ -69,21 +69,28 @@ class CalculationTests(unittest.TestCase):
 
 
 class ReadingTests(unittest.TestCase):
-    def test_reading_follows_atm_and_computes_synthetic(self):
-        r = sf.take_reading(FakeClient(25230.0), make_contracts(), date(2026, 12, 1),
-                            now=datetime(2026, 12, 1, 10, 0))
-        self.assertEqual(r["atm"], 25250)
-        self.assertEqual(r["strike"], 25250)
+    def test_atm_row_follows_spot_and_computes_synthetic(self):
+        rows = sf.take_reading(FakeClient(25230.0), make_contracts(), date(2026, 12, 1),
+                               now=datetime(2026, 12, 1, 10, 0))
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual((r["mode"], r["atm"], r["strike"]), ("ATM", 25250, 25250))
         # CE 25250 = 0 + 40, PE = 20 + 40 -> synthetic = 25250 + 40 - 60
         self.assertAlmostEqual(r["synthetic"], 25230.0)
         self.assertAlmostEqual(r["basis"], 0.0)
 
-    def test_fixed_strike_is_monitored_separately_from_atm(self):
-        r = sf.take_reading(FakeClient(25230.0), make_contracts(), date(2026, 12, 1),
-                            mode="FIXED", fixed_strike=25100, now=datetime(2026, 12, 1, 10, 0))
-        self.assertEqual(r["atm"], 25250)
-        self.assertEqual(r["strike"], 25100)
-        self.assertAlmostEqual(r["ce_intrinsic"], 130)
+    def test_fixed_strike_is_added_next_to_atm_not_instead(self):
+        rows = sf.take_reading(FakeClient(25230.0), make_contracts(), date(2026, 12, 1),
+                               fixed_strike=25100, now=datetime(2026, 12, 1, 10, 0))
+        self.assertEqual([r["mode"] for r in rows], ["ATM", "FIXED"])
+        self.assertEqual(rows[0]["strike"], 25250)
+        self.assertEqual(rows[1]["strike"], 25100)
+        self.assertEqual(rows[1]["atm"], 25250)
+        self.assertAlmostEqual(rows[1]["ce_intrinsic"], 130)
+
+    def test_unknown_fixed_strike_is_skipped(self):
+        rows = sf.take_reading(FakeClient(25230.0), make_contracts(), date(2026, 12, 1), fixed_strike=99999)
+        self.assertEqual([r["mode"] for r in rows], ["ATM"])
 
     def test_missing_contracts_gives_clear_error(self):
         with self.assertRaises(RuntimeError):
@@ -92,7 +99,7 @@ class ReadingTests(unittest.TestCase):
 
 class HistoryTests(unittest.TestCase):
     def reading(self, when, strike=25200, mode="ATM"):
-        r = sf.take_reading(FakeClient(), make_contracts(), date(2026, 12, 1), now=when)
+        r = sf.take_reading(FakeClient(), make_contracts(), date(2026, 12, 1), now=when)[0]
         r.update(recorded_at=when.isoformat(sep=" "), strike=strike, mode=mode)
         return r
 

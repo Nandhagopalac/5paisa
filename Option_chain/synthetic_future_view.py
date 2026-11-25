@@ -113,7 +113,8 @@ def _calc_table(rows, max_height=None):
             f'<thead style="position:sticky;top:0;z-index:1">{head}</thead><tbody>{"".join(body)}</tbody></table></div>')
 
 
-def _live_card(r):
+def _live_card(rows):
+    r = rows[0]  # the ATM row (always present)
     leader = "CE" if r["atm_ce"] > r["atm_pe"] else "PE" if r["atm_pe"] > r["atm_ce"] else "Equal"
     lead = abs(r["atm_ce"] - r["atm_pe"])
     top = "".join([
@@ -123,52 +124,54 @@ def _live_card(r):
               f'{r["atm"]:,} {"+" if leader != "PE" else "−"} {_num(lead)} ({leader} leads)', ORANGE),
         _cell("Synthetic − spot", _signed(r["basis"]), "premium over spot" if r["basis"] >= 0 else "discount to spot",
               _tone(r["basis"])),
-        _cell("Total extrinsic (strike)", _num(r["total_extrinsic"]), f'straddle {_num(r["straddle"])}', PURPLE),
+        _cell("Total extrinsic (ATM)", _num(r["total_extrinsic"]), f'straddle {_num(r["straddle"])}', PURPLE),
     ])
-    row = _calc_rows([{"time": r["recorded_at"][11:], "strike": r["strike"], "ce": r["ce"], "pe": r["pe"]}])
+    shown = _calc_rows([
+        {"time": ("ATM " if x["mode"] == "ATM" else "Fixed ") + x["recorded_at"][11:],
+         "strike": x["strike"], "ce": x["ce"], "pe": x["pe"]} for x in rows])
     return (
         '<div style="background:#fff;border:1px solid #dde5f0;border-radius:8px;padding:8px 12px">'
         f'<div style="display:flex;gap:28px;flex-wrap:wrap">{top}</div>'
-        '<div style="height:8px"></div>' + _calc_table(row) +
+        '<div style="height:8px"></div>' + _calc_table(shown) +
         f'<div style="font-size:10px;color:#64748b;margin-top:4px">'
-        f'Intrinsic = CE − PE on the ITM leg (the leg with the higher premium); extrinsic = premium − intrinsic. '
-        f'Expiry {html.escape(r["expiry"])} · saved every {SLOT_MINUTES} min between 09:15 and 15:30.</div></div>'
+        f'ATM always follows the spot. Intrinsic = CE − PE on the ITM leg (the leg with the higher premium); '
+        f'extrinsic = premium − intrinsic. Expiry {html.escape(r["expiry"])} · saved every {SLOT_MINUTES} min '
+        f'between 09:15 and 15:30.</div></div>'
     )
 
 
 def _live(client, contracts):
     expiry = st.session_state.get("syn_expiry")
-    mode = "FIXED" if st.session_state.get("syn_mode") == "Fixed strike" else "ATM"
-    last_spot = st.session_state.get("syn_last_spot")
-    # Until a strike is typed in, a fixed monitor starts at the current ATM strike.
-    fixed = int(st.session_state.get("syn_strike", 0)) or (atm_strike(last_spot) if last_spot else None)
-    if mode == "FIXED" and fixed is None:
-        mode = "ATM"  # first reading only: learn the spot, then switch to the fixed strike
+    fixed = int(st.session_state.get("syn_strike") or 0) or None
     try:
-        reading = take_reading(client, contracts, expiry, mode, fixed,
-                               last_spot=st.session_state.get("syn_last_spot"))
-        st.session_state.syn_last_spot = reading["spot"]
-        st.session_state.syn_reading = reading
+        rows = take_reading(client, contracts, expiry, fixed,
+                            last_spot=st.session_state.get("syn_last_spot"))
+        st.session_state.syn_last_spot = rows[0]["spot"]
+        st.session_state.syn_rows = rows
+        last_seen = st.session_state.setdefault("syn_last_seen", {})
         log = st.session_state.setdefault("syn_log", [])
-        newest = log[-1] if log else None
-        if not newest or (newest["strike"], newest["ce"], newest["pe"]) != (
-                reading["strike"], reading["ce"], reading["pe"]):
-            log.append({"time": reading["recorded_at"][11:], "strike": reading["strike"],
-                        "ce": reading["ce"], "pe": reading["pe"]})  # kept in memory for the whole day
-            del log[:-40000]
         st.session_state.syn_error = None
-        try:
-            record_reading(reading)
-        except OSError as error:
-            st.session_state.syn_error = f"Could not save history: {error}"
+        for row in rows:
+            token = (row["strike"], row["ce"], row["pe"])
+            if last_seen.get(row["mode"]) != token:  # keep every price change in memory for the day
+                last_seen[row["mode"]] = token
+                log.append({"mode": row["mode"], "time": row["recorded_at"][11:], "strike": row["strike"],
+                            "ce": row["ce"], "pe": row["pe"]})
+            try:
+                record_reading(row)
+            except OSError as error:
+                st.session_state.syn_error = f"Could not save history: {error}"
+        del log[:-40000]
     except Exception as error:  # network / API hiccups must not break the page
         st.session_state.syn_error = str(error)
 
     if st.session_state.get("syn_error"):
         st.warning(st.session_state.syn_error)
-    reading = st.session_state.get("syn_reading")
-    if reading:
-        st.markdown(_live_card(reading), unsafe_allow_html=True)
+    rows = st.session_state.get("syn_rows")
+    if rows:
+        if fixed and not any(r["mode"] == "FIXED" for r in rows):
+            st.caption(f"No price for strike {fixed:,} yet (not listed for this expiry or no trades).")
+        st.markdown(_live_card(rows), unsafe_allow_html=True)
     elif not st.session_state.get("syn_error"):
         st.info("Waiting for prices...")
 
@@ -199,6 +202,15 @@ def _lines(frame, series, title, height=150):
     return _wrap(title, height, parts, legend)
 
 
+def _session_log(choice):
+    """In-memory price changes: ATM rows, or the rows of one fixed strike."""
+    if choice == FOLLOW_ATM:
+        return [r for r in st.session_state.get("syn_log", []) if r.get("mode") == "ATM"]
+    strike = float(choice.replace(",", ""))
+    return [r for r in st.session_state.get("syn_log", [])
+            if r.get("mode") == "FIXED" and float(r["strike"]) == strike]
+
+
 def _history():
     history = load_history()
     st.markdown("**History · every 5 minutes, 09:15 – 15:30**")
@@ -206,9 +218,9 @@ def _history():
         st.info("No readings saved yet. They are saved every 5 minutes between 09:15 and 15:30 while this "
                 "dashboard is open. To keep collecting with it closed, run "
                 "`python .\\Option_chain\\synthetic_future.py` in a terminal.")
-        log = st.session_state.get("syn_log", [])
+        log = _session_log(FOLLOW_ATM)
         if log:
-            st.caption(f"{len(log)} price changes kept in memory since this page was opened.")
+            st.caption(f"{len(log)} ATM price changes kept in memory since this page was opened.")
             st.markdown(_calc_table(_calc_rows(log[-400:])[::-1], 340), unsafe_allow_html=True)
         return
 
@@ -244,8 +256,7 @@ def _history():
                 for t, k, c, p in zip(frame["Time"], frame["strike"], frame["ce"], frame["pe"])]
         st.markdown(_calc_table(_calc_rows(rows)[::-1], 340), unsafe_allow_html=True)
     else:
-        log = [r for r in st.session_state.get("syn_log", [])
-               if choice == FOLLOW_ATM or float(r["strike"]) == float(choice.replace(",", ""))]
+        log = _session_log(choice)
         st.caption(f"{len(log)} price changes kept in memory since this page was opened "
                    "(lost when the page is reloaded; the 5-minute history above is saved on disk).")
         if log:
@@ -255,6 +266,25 @@ def _history():
 
 
 # ---------------- tab ----------------
+def _use_atm():
+    last = st.session_state.get("syn_last_spot")
+    if last:
+        st.session_state.syn_strike = atm_strike(last)
+
+
+def _controls(expiries):
+    e_col, s_col, b_col, _ = st.columns([1, 1.2, 0.8, 3])
+    e_col.selectbox("Weekly expiry", expiries, format_func=lambda d: f"{d:%a %d %b %Y}", key="syn_expiry")
+    st.session_state.setdefault("syn_strike", 0)
+    s_col.number_input("Also monitor a fixed strike (0 = none)", min_value=0, step=STRIKE_STEP,
+                       key="syn_strike")
+    b_col.button("Use current ATM", on_click=_use_atm)
+    st.caption("ATM always follows the spot and is always recorded. A fixed strike is recorded next to it, "
+               "so you can watch how its time value melts all day.")
+    if not in_market_hours(datetime.now(INDIA_TIME).replace(tzinfo=None)):
+        st.caption("Market is closed: prices show the last quotes and nothing is saved until 09:15.")
+
+
 def render_synthetic_tab(client):
     mtime = _core.SCRIP_MASTER_PATH.stat().st_mtime if _core.SCRIP_MASTER_PATH.exists() else 0
     try:
@@ -272,20 +302,13 @@ def render_synthetic_tab(client):
         "<style>div[class*='st-key-synthetic'] [data-testid='stSelectbox'] label p,"
         "div[class*='st-key-synthetic'] label p{font-size:.75rem}</style>", unsafe_allow_html=True)
     with st.container(key="synthetic"):
-        e_col, m_col, s_col, _ = st.columns([1, 1.3, 1, 3])
-        e_col.selectbox("Weekly expiry", expiries, format_func=lambda d: f"{d:%a %d %b %Y}", key="syn_expiry")
-        m_col.radio("Strike to monitor", [FOLLOW_ATM, "Fixed strike"], key="syn_mode", horizontal=True,
-                    label_visibility="visible")
-        last = st.session_state.get("syn_last_spot")
-        s_col.number_input("Fixed strike", min_value=0, step=STRIKE_STEP, key="syn_strike",
-                           value=atm_strike(last) if last else 0,
-                           disabled=st.session_state.get("syn_mode") != "Fixed strike")
-
-        if not in_market_hours(datetime.now(INDIA_TIME).replace(tzinfo=None)):
-            st.caption("Market is closed: prices show the last quotes and nothing is saved until 09:15.")
         if hasattr(st, "fragment"):
+            # Controls live in a fragment so using them reruns only this panel; a full rerun
+            # would make Streamlit jump back to the first ("Live") tab.
+            st.fragment(_controls)(expiries)
             st.fragment(run_every=LIVE_REFRESH_SECONDS)(_live)(client, contracts)
             st.fragment(run_every=5)(_history)()
         else:  # old Streamlit: one pass per rerun
+            _controls(expiries)
             _live(client, contracts)
             _history()

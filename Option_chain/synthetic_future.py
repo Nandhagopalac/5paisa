@@ -15,6 +15,8 @@ data/history/nifty_synthetic_future.csv (git-ignored). The dashboard saves readi
 while it is open; to keep collecting with the dashboard closed run
 
     python .\\Option_chain\\synthetic_future.py --strike 25200
+
+(ATM, which follows the spot, is always saved; --strike adds a fixed strike next to it.)
 """
 import argparse
 import configparser
@@ -128,12 +130,12 @@ def _price(quotes, code):
     return float(value) if value else None
 
 
-def take_reading(client, contracts, expiry, mode="ATM", fixed_strike=None,
-                 last_spot=None, now=None):
-    """One live reading. Raises RuntimeError with a readable reason if prices are missing.
+def take_reading(client, contracts, expiry, fixed_strike=None, last_spot=None, now=None):
+    """One live reading as a list of rows: the ATM row first, then (optionally) a fixed-strike row.
 
-    mode "ATM"   : monitor the ATM strike (it moves with the spot).
-    mode "FIXED" : monitor fixed_strike, plus the ATM strike for the synthetic future.
+    The ATM strike always follows the spot. The synthetic future is always taken at the ATM
+    strike. Fixed-strike monitoring is extra and never replaces ATM. Raises RuntimeError with a
+    readable reason if the spot or the ATM prices are missing.
     """
     now = now or datetime.now(INDIA_TIME)
     spot = last_spot
@@ -146,9 +148,13 @@ def take_reading(client, contracts, expiry, mode="ATM", fixed_strike=None,
         atm = atm_strike(spot)
         wanted = {}
         requests = [SPOT_REQUEST]
-        for label, strike in (("atm", atm), ("monitored", fixed_strike if mode == "FIXED" else atm)):
+        for label, strike in (("atm", atm), ("fixed", fixed_strike)):
+            if not strike:
+                continue
             codes = option_codes(contracts, expiry, strike)
             if codes is None:
+                if label == "fixed":
+                    continue  # unknown fixed strike: skip it, ATM still works
                 raise RuntimeError(f"No CE/PE contracts for strike {strike} on {expiry}. "
                                    "Refresh scrip_master.csv (python Cache/cachefile.py --refresh-cache).")
             wanted[label] = (strike, codes)
@@ -167,20 +173,24 @@ def take_reading(client, contracts, expiry, mode="ATM", fixed_strike=None,
     atm_ce, atm_pe = _price(quotes, atm_ce_code), _price(quotes, atm_pe_code)
     if atm_ce is None or atm_pe is None:
         raise RuntimeError(f"No price for the ATM {atm_strike_value} CE/PE yet.")
-    strike, (ce_code, pe_code) = wanted["monitored"]
-    ce, pe = _price(quotes, ce_code), _price(quotes, pe_code)
-    if ce is None or pe is None:
-        raise RuntimeError(f"No price for the {strike} CE/PE yet.")
-
     synthetic = synthetic_future(atm_strike_value, atm_ce, atm_pe)
-    reading = {
+    common = {
         "recorded_at": now.replace(microsecond=0, tzinfo=None).isoformat(sep=" "),
         "expiry": str(expiry), "spot": spot, "atm": atm_strike_value,
-        "atm_ce": atm_ce, "atm_pe": atm_pe, "synthetic": synthetic,
-        "basis": synthetic - spot, "mode": mode, "strike": strike, "ce": ce, "pe": pe,
+        "atm_ce": atm_ce, "atm_pe": atm_pe, "synthetic": synthetic, "basis": synthetic - spot,
     }
-    reading.update(leg_values(strike, ce, pe))
-    return reading
+
+    def row(mode, strike, ce, pe):
+        return {**common, "mode": mode, "strike": strike, "ce": ce, "pe": pe,
+                **leg_values(strike, ce, pe)}
+
+    rows = [row("ATM", atm_strike_value, atm_ce, atm_pe)]
+    if "fixed" in wanted:
+        strike, (ce_code, pe_code) = wanted["fixed"]
+        ce, pe = _price(quotes, ce_code), _price(quotes, pe_code)
+        if ce is not None and pe is not None:
+            rows.append(row("FIXED", strike, ce, pe))
+    return rows
 
 
 # ---------------- history (one row per 5-minute slot, 09:15-15:30) ----------------
@@ -268,18 +278,18 @@ def main():
 
     contracts = load_contracts()
     expiry = date.fromisoformat(args.expiry) if args.expiry else upcoming_expiries(contracts)[0]
-    mode = "FIXED" if args.strike else "ATM"
     client, last_spot = _client_from_config(), None
-    print(f"Monitoring NIFTY expiry {expiry}, {'strike ' + str(args.strike) if args.strike else 'ATM'}.")
+    print(f"Monitoring NIFTY expiry {expiry}: ATM (follows spot)"
+          + (f" and fixed strike {args.strike}." if args.strike else "."))
     while True:
         now = datetime.now(INDIA_TIME)
         if in_market_hours(now.replace(tzinfo=None)) or args.once:
             try:
-                reading = take_reading(client, contracts, expiry, mode, args.strike, last_spot, now)
-                last_spot = reading["spot"]
-                saved = record_reading(reading)
-                print(f"{reading['recorded_at']} spot {reading['spot']:.2f} synthetic "
-                      f"{reading['synthetic']:.2f} {'saved' if saved else 'skipped'}")
+                rows = take_reading(client, contracts, expiry, args.strike, last_spot, now)
+                last_spot = rows[0]["spot"]
+                saved = [record_reading(r) for r in rows]
+                print(f"{rows[0]['recorded_at']} spot {rows[0]['spot']:.2f} synthetic "
+                      f"{rows[0]['synthetic']:.2f} {'saved' if any(saved) else 'skipped'}")
             except RuntimeError as error:
                 print(f"{now:%H:%M:%S} {error}")
         if args.once:
