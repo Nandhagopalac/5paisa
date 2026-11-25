@@ -127,6 +127,43 @@ def render_history(path=HISTORY_PATH):
         _render(path)
 
 
+def _compact(value, signed=False):
+    """11,07,70,448 -> 11.08 Cr; 5,83,215 -> 5.83 L (full number on hover)."""
+    sign = ("+" if value > 0 else "−" if value < 0 else "") if signed else ""
+    number = abs(value)
+    if number >= 1e7:
+        text = f"{number / 1e7:.2f} Cr"
+    elif number >= 1e5:
+        text = f"{number / 1e5:.2f} L"
+    elif number >= 1e3:
+        text = f"{number / 1e3:.1f} K"
+    else:
+        text = f"{number:.0f}"
+    return sign + text
+
+
+def _readings_table(frame, max_height=185):
+    """Small HTML table that fits its column (no sideways scrolling); hover shows full numbers."""
+    th = "padding:2px 5px;font-size:10px;color:#475569;text-align:right;position:sticky;top:0;background:#f1f5f9"
+    td = "padding:2px 5px;font-size:10.5px;text-align:right;white-space:nowrap;border-top:1px solid #eef1f6"
+    ce_add, pe_add = frame["CE"].diff(), frame["PE"].diff()
+    rows = []
+    for i in range(len(frame) - 1, -1, -1):
+        def cell(value, signed=False):
+            if pd.isna(value):
+                return f'<td style="{td}"></td>'
+            colour = ("#16a36a" if value > 0 else "#e34b4b" if value < 0 else "#475569") if signed else "#0f172a"
+            return (f'<td style="{td};color:{colour}" title="{format_indian(value)}">'
+                    f'{_compact(value, signed)}</td>')
+        rows.append(f'<tr><td style="{td};text-align:left">{frame["Time"].iloc[i]:%H:%M}</td>'
+                    + cell(frame["CE"].iloc[i]) + cell(frame["PE"].iloc[i])
+                    + cell(ce_add.iloc[i], True) + cell(pe_add.iloc[i], True) + "</tr>")
+    head = "".join(f'<th style="{th}">{h}</th>' for h in ("Time", "CE", "PE", "CE +", "PE +"))
+    return (f'<div style="max-height:{max_height}px;overflow-y:auto;border:1px solid #dde5f0;border-radius:6px;'
+            f'background:#fff"><table style="border-collapse:collapse;width:100%;font-family:sans-serif">'
+            f'<thead><tr>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>')
+
+
 def _render(path):
     history = load_history(path)
     st.markdown(
@@ -168,7 +205,7 @@ def _render(path):
     st.caption(f"{len(frame)} readings on {day:%d %b %Y}, first {frame['Time'].iloc[0]:%H:%M}, "
                f"last {frame['Time'].iloc[-1]:%H:%M} IST.")
 
-    c_line, c_lead, c_added, c_table = st.columns(4)
+    c_line, c_lead, c_added, c_table = st.columns([1, 1, 1, 1.25])
     c_line.markdown(line_chart(frame, "CE vs PE volume"), unsafe_allow_html=True)
     c_lead.markdown(bar_chart(frame, ["Lead"], "Who leads (CE − PE)"), unsafe_allow_html=True)
     changes = frame.dropna(subset=["CE added"])
@@ -179,18 +216,10 @@ def _render(path):
                                    f"Added in each {INTERVAL_MINUTES} min", legend=_legend()),
                          unsafe_allow_html=True)
 
-    recent = frame.iloc[::-1].copy()  # whole day, latest first
-    recent["Time"] = recent["Time"].dt.strftime("%H:%M")
-    for col in ("CE", "PE", "CE added", "PE added"):
-        recent[col] = recent[col].map(
-            lambda v: "" if pd.isna(v) else (_signed(v) if col.endswith("added") else format_indian(v)))
     gaps = int((frame["Time"].diff() > pd.Timedelta(minutes=INTERVAL_MINUTES * 2)).sum())
     c_table.markdown(f"**Every {INTERVAL_MINUTES} min** ({len(frame)} readings"
                      + (f", {gaps} gap(s) when the dashboard was off" if gaps else "") + ")")
-    c_table.dataframe(
-        recent[["Time", "CE", "PE", "CE added", "PE added"]].rename(
-            columns={"CE added": "CE +", "PE added": "PE +"}),
-        hide_index=True, use_container_width=True, height=170)
+    c_table.markdown(_readings_table(frame), unsafe_allow_html=True)
 
     with st.expander("All readings"):
         table = frame[["Time", "CE", "PE", "Lead", "CE added", "PE added"]].copy()
