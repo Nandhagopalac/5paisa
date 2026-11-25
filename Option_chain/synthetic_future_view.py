@@ -17,7 +17,7 @@ from Option_chain.derivatives_history_view import (
 )
 from Option_chain.synthetic_future import (
     HISTORY_PATH, INDIA_TIME, SLOT_MINUTES, STRIKE_STEP, atm_strike, load_contracts,
-    load_history, record_reading, take_reading, upcoming_expiries, in_market_hours,
+    load_history, record_reading, append_tick, load_ticks, last_tick_tokens, take_reading, upcoming_expiries, in_market_hours,
 )
 from Option_chain import synthetic_future as _core
 
@@ -148,20 +148,24 @@ def _live(client, contracts):
                             last_spot=st.session_state.get("syn_last_spot"))
         st.session_state.syn_last_spot = rows[0]["spot"]
         st.session_state.syn_rows = rows
-        last_seen = st.session_state.setdefault("syn_last_seen", {})
-        log = st.session_state.setdefault("syn_log", [])
+        today = datetime.now(INDIA_TIME).date()
+        if st.session_state.get("syn_seen_day") != today:  # new browser session or new day
+            st.session_state.syn_seen_day = today
+            st.session_state.syn_last_seen = last_tick_tokens(today)
+        last_seen = st.session_state.syn_last_seen
         st.session_state.syn_error = None
         for row in rows:
-            token = (row["strike"], row["ce"], row["pe"])
-            if last_seen.get(row["mode"]) != token:  # keep every price change in memory for the day
+            token = (float(row["strike"]), row["ce"], row["pe"])
+            if last_seen.get(row["mode"]) != token:  # every price change is saved for the whole day
                 last_seen[row["mode"]] = token
-                log.append({"mode": row["mode"], "time": row["recorded_at"][11:], "strike": row["strike"],
-                            "ce": row["ce"], "pe": row["pe"]})
+                try:
+                    append_tick(row)
+                except OSError as error:
+                    st.session_state.syn_error = f"Could not save price changes: {error}"
             try:
                 record_reading(row)
             except OSError as error:
                 st.session_state.syn_error = f"Could not save history: {error}"
-        del log[:-40000]
     except Exception as error:  # network / API hiccups must not break the page
         st.session_state.syn_error = str(error)
 
@@ -202,13 +206,15 @@ def _lines(frame, series, title, height=150):
     return _wrap(title, height, parts, legend)
 
 
-def _session_log(choice):
-    """In-memory price changes: ATM rows, or the rows of one fixed strike."""
+def _tick_log(day, choice):
+    """Saved price changes of the day: ATM rows, or the rows of one fixed strike (oldest first)."""
+    ticks = load_ticks(day)
     if choice == FOLLOW_ATM:
-        return [r for r in st.session_state.get("syn_log", []) if r.get("mode") == "ATM"]
-    strike = float(choice.replace(",", ""))
-    return [r for r in st.session_state.get("syn_log", [])
-            if r.get("mode") == "FIXED" and float(r["strike"]) == strike]
+        ticks = ticks[ticks["mode"] == "ATM"]
+    else:
+        ticks = ticks[(ticks["mode"] == "FIXED") & (ticks["strike"] == float(choice.replace(",", "")))]
+    return [{"time": f"{t:%H:%M:%S}", "strike": k, "ce": c, "pe": p}
+            for t, k, c, p in zip(ticks["time"], ticks["strike"], ticks["ce"], ticks["pe"])]
 
 
 def _history():
@@ -218,9 +224,9 @@ def _history():
         st.info("No readings saved yet. They are saved every 5 minutes between 09:15 and 15:30 while this "
                 "dashboard is open. To keep collecting with it closed, run "
                 "`python .\\Option_chain\\synthetic_future.py` in a terminal.")
-        log = _session_log(FOLLOW_ATM)
+        log = _tick_log(datetime.now(INDIA_TIME).date(), FOLLOW_ATM)
         if log:
-            st.caption(f"{len(log)} ATM price changes kept in memory since this page was opened.")
+            st.caption(f"{len(log)} ATM price changes saved today.")
             st.markdown(_calc_table(_calc_rows(log[-400:])[::-1], 340), unsafe_allow_html=True)
         return
 
@@ -249,16 +255,16 @@ def _history():
     c3.markdown(_lines(frame, [("ce", GREEN, "CE"), ("pe", RED, "PE"), ("straddle", PURPLE, "Straddle")],
                        "Option prices at the strike"), unsafe_allow_html=True)
 
-    view = st.radio("Calculation history", ["Every 5 minutes (saved all day)", "Every price change (this browser session)"],
+    view = st.radio("Calculation history", ["Every 5 minutes (saved all day)", "Every price change (saved all day)"],
                     horizontal=True, key="syn_view")
     if view.startswith("Every 5"):
         rows = [{"time": f"{t:%H:%M}", "strike": k, "ce": c, "pe": p}
                 for t, k, c, p in zip(frame["Time"], frame["strike"], frame["ce"], frame["pe"])]
         st.markdown(_calc_table(_calc_rows(rows)[::-1], 340), unsafe_allow_html=True)
     else:
-        log = _session_log(choice)
-        st.caption(f"{len(log)} price changes kept in memory since this page was opened "
-                   "(lost when the page is reloaded; the 5-minute history above is saved on disk).")
+        log = _tick_log(day, choice)
+        st.caption(f"{len(log)} price changes saved on {day:%d %b} (every change, kept all day on disk; "
+                   "each new day starts a new file). Showing the latest 400.")
         if log:
             st.markdown(_calc_table(_calc_rows(log[-400:])[::-1], 340), unsafe_allow_html=True)
     st.download_button("Download 5-minute history (CSV)", data=history.drop(columns=["Time"]).to_csv(index=False),

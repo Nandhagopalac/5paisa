@@ -255,6 +255,44 @@ def load_history(path=HISTORY_PATH):
     return frame
 
 
+# ---------------- every price change (one file per day, so each day starts fresh) ----------------
+TICK_COLUMNS = ["time", "mode", "strike", "ce", "pe"]
+
+
+def ticks_path(day, folder=HISTORY_PATH.parent):
+    return Path(folder) / f"nifty_synthetic_ticks_{day:%Y-%m-%d}.csv"
+
+
+def append_tick(row, folder=HISTORY_PATH.parent):
+    """Append one price change (ATM or fixed strike) to today's tick file."""
+    moment = datetime.fromisoformat(row["recorded_at"])
+    path = ticks_path(moment.date(), folder)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    new_file = not path.is_file() or path.stat().st_size == 0
+    with path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        if new_file:
+            writer.writerow(TICK_COLUMNS)
+        writer.writerow([row["recorded_at"], row["mode"], row["strike"], row["ce"], row["pe"]])
+
+
+def load_ticks(day, folder=HISTORY_PATH.parent):
+    """All saved price changes of one day (columns time, mode, strike, ce, pe)."""
+    path = ticks_path(day, folder)
+    if not path.is_file() or path.stat().st_size == 0:
+        return pd.DataFrame(columns=TICK_COLUMNS)
+    frame = pd.read_csv(path)
+    frame["time"] = pd.to_datetime(frame["time"], errors="coerce")
+    return frame.dropna(subset=["time"]).reset_index(drop=True)
+
+
+def last_tick_tokens(day, folder=HISTORY_PATH.parent):
+    """{mode: (strike, ce, pe)} of the newest saved change per mode (to avoid repeats after a restart)."""
+    frame = load_ticks(day, folder)
+    return {m: (float(g.iloc[-1]["strike"]), float(g.iloc[-1]["ce"]), float(g.iloc[-1]["pe"]))
+            for m, g in frame.groupby("mode")}
+
+
 # ---------------- stand-alone collector ----------------
 def _client_from_config():
     from py5paisa import FivePaisaClient

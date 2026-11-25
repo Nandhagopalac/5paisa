@@ -128,5 +128,23 @@ class HistoryTests(unittest.TestCase):
             self.assertTrue(sf.load_history(Path(tmp) / "none.csv").empty)
 
 
+class TickTests(unittest.TestCase):
+    def row(self, when, mode, strike, ce, pe):
+        return {"recorded_at": when.isoformat(sep=" "), "mode": mode, "strike": strike, "ce": ce, "pe": pe}
+
+    def test_ticks_are_saved_per_day_and_reloaded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sf.append_tick(self.row(datetime(2026, 12, 1, 9, 15, 1), "ATM", 25250, 100.0, 90.0), tmp)
+            sf.append_tick(self.row(datetime(2026, 12, 1, 9, 15, 2), "FIXED", 25100, 170.0, 40.0), tmp)
+            sf.append_tick(self.row(datetime(2026, 12, 1, 9, 15, 3), "ATM", 25250, 101.0, 90.0), tmp)
+            sf.append_tick(self.row(datetime(2026, 12, 2, 9, 15, 1), "ATM", 25300, 80.0, 85.0), tmp)
+            today = sf.load_ticks(date(2026, 12, 1), tmp)
+            self.assertEqual(len(today), 3)                       # the next day lives in its own file
+            self.assertEqual(len(sf.load_ticks(date(2026, 12, 2), tmp)), 1)
+            self.assertEqual(sf.last_tick_tokens(date(2026, 12, 1), tmp),
+                             {"ATM": (25250.0, 101.0, 90.0), "FIXED": (25100.0, 170.0, 40.0)})
+            self.assertTrue(sf.load_ticks(date(2026, 12, 3), tmp).empty)
+
+
 if __name__ == "__main__":
     unittest.main()
