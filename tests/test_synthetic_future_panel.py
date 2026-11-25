@@ -34,7 +34,8 @@ class PanelTests(unittest.TestCase):
     def test_summary_and_chain(self):
         d = self.snapshot()
         self.assertEqual(d["atm"], 25350)
-        self.assertEqual([r["strike"] for r in d["chain"]], [25500, 25450, 25400, 25350, 25300, 25250, 25200])
+        self.assertEqual([r["strike"] for r in d["chain"]], list(range(25850, 24800, -50)))
+        self.assertEqual(len(d["chain"]), 21)  # 10 above, ATM, 10 below
         # CE 25350 = 17.5 + 40 -> PE 25350 = 0 + 40 ... synthetic = strike + CE - PE
         self.assertAlmostEqual(d["synthetic"], 25350 + d["ce"] - d["pe"])
         self.assertEqual(d["future"], 25200.0)

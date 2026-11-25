@@ -29,7 +29,7 @@ class FakeClient:
 
 def make_contracts(expiry=date(2026, 12, 1)):
     rows = []
-    for strike in range(25000, 25650, 50):
+    for strike in range(24800, 25900, 50):
         rows.append((expiry, float(strike), "CE", strike * 10 + 1))
         rows.append((expiry, float(strike), "PE", strike * 10 + 2))
     return pd.DataFrame(rows, columns=["Expiry", "Strike", "Type", "ScripCode"])

@@ -20,7 +20,7 @@ from Option_chain.synthetic_future import (
     synthetic_future, upcoming_expiries,
 )
 
-STRIKES_EACH_SIDE = 3
+STRIKES_EACH_SIDE = 10
 REFRESH_SECONDS = 1
 
 # TradingView-like palette
@@ -133,7 +133,7 @@ def _n(value, decimals=2):
 
 
 def _row(label, value, value_bg=VALUE_BG, label_bg=LABEL_BG):
-    cell = "padding:5px 8px;color:#fff;text-align:center;border:1px solid #fff;font-size:13px;"
+    cell = "padding:2px 6px;color:#fff;text-align:center;border:1px solid #fff;font-size:11px;line-height:1.25;"
     return (f'<tr><td style="{cell}background:{label_bg}">{html.escape(label)}</td>'
             f'<td style="{cell}background:{value_bg}">{value}</td></tr>')
 
@@ -153,7 +153,7 @@ def panel_html(d):
         _row("Last option trade", html.escape(d["last_trade"] or "-")),
     ])
 
-    cell = "padding:5px 2px;color:#fff;text-align:center;border:1px solid #fff;font-size:11px;white-space:nowrap;"
+    cell = "padding:1px 2px;color:#fff;text-align:center;border:1px solid #fff;font-size:10px;line-height:1.2;white-space:nowrap;"
     head_bg = TITLE_BG
     heads = ("CE Prev", "CE Chg %", "CE Ltp", "Strike", "PE Ltp", "PE Chg %", "PE Prev")
     chain = [f'<tr><td colspan="3" style="{cell}background:{head_bg};font-weight:700">CALL</td>'
@@ -183,9 +183,9 @@ def panel_html(d):
             + chg_cell(pe, o)
             + f'<td style="{cell}background:{tint(PREV_BG)}">{_n(pe["prev"])}</td></tr>')
 
-    title = (f'<div style="background:{TITLE_BG};color:#fff;text-align:center;padding:6px;font-weight:700;'
-             f'font-size:13px;border:1px solid #fff">NIFTY | Synthetic Future | Exp {d["expiry"]:%d-%m-%y}</div>')
-    return (f'<div style="max-width:560px;font-family:sans-serif">{title}'
+    title = (f'<div style="background:{TITLE_BG};color:#fff;text-align:center;padding:3px;font-weight:700;'
+             f'font-size:11px;border:1px solid #fff">NIFTY | Synthetic Future | Exp {d["expiry"]:%d-%m-%y}</div>')
+    return (f'<div style="max-width:430px;font-family:sans-serif">{title}'
             f'<table style="border-collapse:collapse;width:100%;table-layout:fixed">{summary}</table>'
             f'<table style="border-collapse:collapse;width:100%;table-layout:fixed">{"".join(chain)}</table>'
             f'<div style="font-size:10px;color:#64748b;margin-top:4px">Basis = future − synthetic future. '
