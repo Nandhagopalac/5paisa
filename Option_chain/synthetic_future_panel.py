@@ -15,7 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from Option_chain import synthetic_future as core
-from Option_chain import synthetic_future_oi as oi_view
+from Option_chain import synthetic_future_cum_oi as oi_view
 from Option_chain.synthetic_future import (
     INDIA_TIME, SPOT_REQUEST, STRIKE_STEP, atm_strike, fetch_quotes, option_codes,
     synthetic_future, upcoming_expiries,
