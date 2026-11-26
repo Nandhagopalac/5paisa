@@ -146,6 +146,33 @@ def changes(summary, snapshots, now=None):
     return result
 
 
+# ---------------- how often does the feed's OI change? ----------------
+def track_updates(state, summary, now=None):
+    """Remember when the cumulative OI last changed and how long it usually stays unchanged.
+
+    `state` is a dict kept by the caller (e.g. in session state). Returns display text or ''.
+    """
+    now = now or datetime.now(INDIA_TIME)
+    if not summary or not summary["available"]:
+        return ""
+    total = (summary["ce"], summary["pe"], tuple(summary["strikes"]))
+    if state.get("total") is None:
+        state["total"], state["since"] = total, now
+        return "waiting for the first OI change"
+    if total[2] == state["total"][2] and total[:2] != state["total"][:2]:
+        gap = (now - state["since"]).total_seconds()
+        state.setdefault("gaps", []).append(gap)
+        del state["gaps"][:-30]
+        state["changed_at"] = now
+    if total[2] != state["total"][2] or total[:2] != state["total"][:2]:
+        state["total"], state["since"] = total, now
+    gaps = sorted(state.get("gaps", []))
+    if "changed_at" not in state:
+        return "waiting for the first OI change"
+    typical = f" · typically every {gaps[len(gaps) // 2]:.0f}s" if len(gaps) >= 3 else ""
+    return f"last changed {state['changed_at']:%H:%M:%S}{typical}"
+
+
 # ---------------- table rows (HTML) ----------------
 def _lakh(value, signed=False):
     sign = ("+" if value > 0 else "−" if value < 0 else "") if signed else ""
@@ -179,7 +206,8 @@ def rows_html(d, row):
     low, high = oi["strikes"][0], oi["strikes"][-1]
     return (row(f"Cumulative OI CE ({low}–{high})", line(0))
             + row(f"Cumulative OI PE ({low}–{high})", line(1))
-            + row("PE − CE OI", f"{_lakh(oi['pe'] - oi['ce'], True)} · {html.escape(text)}", colour, colour))
+            + row("PE − CE OI", f"{_lakh(oi['pe'] - oi['ce'], True)} · {html.escape(text)}", colour, colour)
+            + (row("OI feed update", html.escape(d["oi_update"])) if d.get("oi_update") else ""))
 
 
 # ---------------- stand-alone collector ----------------

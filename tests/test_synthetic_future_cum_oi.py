@@ -84,5 +84,21 @@ class OiTests(unittest.TestCase):
             self.assertEqual(delta["prev"], (0, 0))
 
 
+class UpdateTrackerTests(unittest.TestCase):
+    def test_tracks_when_oi_changes_and_typical_gap(self):
+        state, base = {}, datetime(2026, 12, 1, 10, 0, 0)
+
+        def at(seconds, bump):
+            client = OiClient(25367.5)
+            client.bump = bump
+            return oi.track_updates(state, snapshot(client)["oi"], base.replace(second=0) + __import__("datetime").timedelta(seconds=seconds))
+        self.assertIn("waiting", at(0, 0))
+        self.assertIn("waiting", at(5, 0))                 # unchanged
+        self.assertIn("10:00:10", at(10, 100))             # first change
+        for t, b in ((40, 200), (70, 300), (100, 400)):    # changes every 30 s
+            text = at(t, b)
+        self.assertIn("typically every 30s", text)
+
+
 if __name__ == "__main__":
     unittest.main()

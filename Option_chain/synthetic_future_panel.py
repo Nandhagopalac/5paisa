@@ -214,6 +214,7 @@ def _live(client, contracts, futures):
             today = datetime.now(INDIA_TIME).date()
             data["oi_change"] = oi_view.changes(data["oi"], oi_view.load_snapshots(today))
             oi_view.record_snapshot(data["oi"]["oi_map"], data["expiry"])
+            data["oi_update"] = oi_view.track_updates(st.session_state.setdefault("pn_oi_state", {}), data["oi"])
         except Exception:  # OI is extra; never break the table
             data["oi_change"] = {}
         st.session_state.pn_data = data
