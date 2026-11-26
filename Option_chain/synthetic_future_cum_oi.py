@@ -15,12 +15,14 @@ Run  python .\\Option_chain\\synthetic_future_cum_oi.py  to keep saving snapshot
 """
 import csv
 import html
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # lets `python Option_chain\\synthetic_future_cum_oi.py` find the package
 from Option_chain.synthetic_future import (
     HISTORY_PATH, INDIA_TIME, SLOT_MINUTES, _client_from_config, in_market_hours,
     load_contracts, upcoming_expiries,
