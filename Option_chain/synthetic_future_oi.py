@@ -1,185 +1,207 @@
-"""Live NIFTY option OI table for ATM and five strikes on either side."""
-import math
+"""Cumulative open interest (OI) around ATM for the synthetic-future table.
+
+Cumulative OI CE / PE = the sum of OI over ATM and the 3 strikes above and below it.
+Rule of thumb used on the table:
+    PE OI higher than CE OI  -> put writers dominate -> bias is up (bullish)
+    CE OI higher than PE OI  -> call writers dominate -> bias is down (bearish)
+This is an indicator, not a trading signal.
+
+Live change: every 5 minutes (09:15-15:30) the OI of the ATM +-10 strikes is saved to
+data/history/nifty_oi_snapshots.csv. The change shown on the table is measured on the same
+strikes, against the previous 5-minute snapshot and against the first snapshot of the day,
+so a moving ATM does not fake a change.
+
+Run  python .\\Option_chain\\synthetic_future_oi.py  to keep saving snapshots with the dashboard closed.
+"""
+import csv
+import html
+import time
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
-import streamlit as st
 
-from Option_chain import synthetic_future as core
+from Option_chain.synthetic_future import (
+    HISTORY_PATH, INDIA_TIME, SLOT_MINUTES, _client_from_config, in_market_hours,
+    load_contracts, upcoming_expiries,
+)
 
-STRIKES_EACH_SIDE = 5
-REFRESH_SECONDS = 1
-
-
-def _number(value):
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
+OI_STRIKES_EACH_SIDE = 3
+OI_PATH = HISTORY_PATH.parent / "nifty_oi_snapshots.csv"
+COLUMNS = ["recorded_at", "expiry", "strike", "type", "oi"]
+# Field names 5paisa's market feed may use for open interest
+OI_KEYS = ("OpenInterest", "OI", "OpenInt", "Oi", "OpenInterestQty")
 
 
-def _oi_values(tick):
-    tick = tick or {}
-    oi = _number(tick.get("OpenInterest"))
-    change = _number(tick.get("ChangeInOI"))
-    if change is None and oi is not None:
-        previous = _number(tick.get("Prev_OI"))
-        if previous is not None:
-            change = oi - previous
-    return oi, change
+def oi_from_tick(tick):
+    """Open interest from a quote dict, or None if the feed has no OI field."""
+    for key in OI_KEYS:
+        value = (tick or {}).get(key)
+        if value not in (None, ""):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+    return None
 
 
-def take_oi_snapshot(client, contracts, expiry, last_spot=None):
-    """Fetch OI for the ATM strike and five strikes either side."""
-    spot = last_spot
-    if spot is None:
-        quotes = core.fetch_quotes(client, [core.SPOT_REQUEST])
-        spot = _number((quotes.get(core.SPOT_REQUEST["ScripCode"]) or {}).get("LastRate"))
-        if spot is None:
-            raise RuntimeError("Could not read the NIFTY spot price (index code 999920000).")
+# ---------------- calculation ----------------
+def summarize(chain, atm, each_side=OI_STRIKES_EACH_SIDE, step=50):
+    """Cumulative OI of ATM +- each_side strikes from the panel chain.
 
-    for _ in range(2):
-        atm = core.atm_strike(spot)
-        strikes = [atm + core.STRIKE_STEP * offset
-                   for offset in range(-STRIKES_EACH_SIDE, STRIKES_EACH_SIDE + 1)]
-        codes = {strike: core.option_codes(contracts, expiry, strike) for strike in strikes}
-        if codes.get(atm) is None:
-            raise RuntimeError(f"No CE/PE contracts for ATM strike {atm} on {expiry}. "
-                               "Refresh scrip_master.csv.")
-        requests = [core.SPOT_REQUEST]
-        for pair in codes.values():
+    chain: [{"strike", "ce": {"oi"}, "pe": {"oi"}}, ...] (more strikes than needed is fine).
+    Returns {"available", "strikes", "ce", "pe", "oi_map"}; oi_map has every strike in the chain.
+    """
+    window = {atm + step * k for k in range(-each_side, each_side + 1)}
+    oi_map = {}
+    for row in chain:
+        for kind in ("ce", "pe"):
+            value = row[kind].get("oi")
+            if value is not None:
+                oi_map[(float(row["strike"]), kind.upper())] = value
+    strikes = sorted(s for s in window if (float(s), "CE") in oi_map and (float(s), "PE") in oi_map)
+    return {
+        "available": bool(strikes), "strikes": strikes,
+        "ce": sum(oi_map[(float(s), "CE")] for s in strikes),
+        "pe": sum(oi_map[(float(s), "PE")] for s in strikes),
+        "oi_map": oi_map,
+    }
+
+
+def bias(ce, pe):
+    """(text, colour) for the CE/PE OI comparison."""
+    if pe > ce:
+        return "PE OI higher: bias UP", "#009b7d"
+    if ce > pe:
+        return "CE OI higher: bias DOWN", "#c62828"
+    return "CE and PE OI equal: neutral", "#787b86"
+
+
+# ---------------- snapshots ----------------
+def _slot(moment):
+    return moment.replace(minute=moment.minute // SLOT_MINUTES * SLOT_MINUTES, second=0, microsecond=0)
+
+
+def load_snapshots(day, path=OI_PATH):
+    """Saved snapshots of one day (columns recorded_at, expiry, strike, type, oi)."""
+    path = Path(path)
+    if not path.is_file() or path.stat().st_size == 0:
+        return pd.DataFrame(columns=COLUMNS)
+    frame = pd.read_csv(path)
+    frame["recorded_at"] = pd.to_datetime(frame["recorded_at"], errors="coerce")
+    return frame[frame["recorded_at"].dt.date == day].dropna(subset=["recorded_at"])
+
+
+def record_snapshot(oi_map, expiry, now=None, path=OI_PATH):
+    """Save the OI of all strikes in oi_map once per 5-minute slot. Returns True if saved."""
+    now = (now or datetime.now(INDIA_TIME)).replace(tzinfo=None)
+    if not oi_map or not in_market_hours(now):
+        return False
+    slot = _slot(now)
+    existing = load_snapshots(now.date(), path)
+    if not existing.empty and (existing["recorded_at"].map(_slot) == slot).any():
+        return False
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    new_file = not path.is_file() or path.stat().st_size == 0
+    stamp = slot.isoformat(sep=" ")  # one timestamp per snapshot (the slot start)
+    with path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        if new_file:
+            writer.writerow(COLUMNS)
+        for (strike, kind), oi in sorted(oi_map.items()):
+            writer.writerow([stamp, expiry, int(strike), kind, oi])
+    return True
+
+
+def _sum_at(frame, moment, strikes, kind):
+    rows = frame[(frame["recorded_at"] == moment) & (frame["type"] == kind) & (frame["strike"].isin(strikes))]
+    return dict(zip(rows["strike"].astype(float), rows["oi"]))
+
+
+def changes(summary, snapshots, now=None):
+    """Change of cumulative CE/PE OI vs the previous snapshot and vs the first one of the day.
+
+    Compared strike by strike on the strikes both moments have, so a moving ATM is not counted.
+    Returns {"prev": (ce, pe) or None, "open": (ce, pe) or None}.
+    """
+    now = (now or datetime.now(INDIA_TIME)).replace(tzinfo=None)
+    result = {"prev": None, "open": None}
+    if snapshots.empty or not summary["available"]:
+        return result
+    times = [pd.Timestamp(t) for t in sorted(snapshots["recorded_at"].unique())]
+    earlier = [t for t in times if t < _slot(now)]
+    picks = {"prev": earlier[-1] if earlier else None, "open": earlier[0] if earlier else None}
+    for name, moment in picks.items():
+        if moment is None:
+            continue
+        delta = []
+        for kind in ("CE", "PE"):
+            before = _sum_at(snapshots, moment, summary["strikes"], kind)
+            now_oi = {float(s): summary["oi_map"][(float(s), kind)] for s in summary["strikes"]}
+            common = [s for s in now_oi if s in before]
+            delta.append(sum(now_oi[s] - before[s] for s in common) if common else None)
+        if None not in delta:
+            result[name] = tuple(delta)
+    return result
+
+
+# ---------------- table rows (HTML) ----------------
+def _lakh(value, signed=False):
+    sign = ("+" if value > 0 else "−" if value < 0 else "") if signed else ""
+    number = abs(value)
+    if number >= 1e7:
+        text = f"{number / 1e7:.2f} Cr"
+    elif number >= 1e5:
+        text = f"{number / 1e5:.2f} L"
+    else:
+        text = f"{number:,.0f}"
+    return sign + text
+
+
+def rows_html(d, row):
+    """Extra summary rows for panel_html: cumulative OI CE, PE and the bias. `row` = panel's _row."""
+    oi = d.get("oi")
+    if not oi or not oi["available"]:
+        return row("Cumulative OI (ATM ±3)", "OI not in the quote feed")
+    delta = d.get("oi_change") or {}
+
+    def line(index):
+        bits = []
+        for label, key in (("5m", "prev"), ("open", "open")):
+            pair = delta.get(key)
             if pair:
-                requests.extend(
-                    {"Exch": "N", "ExchType": "D", "ScripCode": code}
-                    for code in pair
-                )
-        unique = {(request["ExchType"], request["ScripCode"]): request for request in requests}
-        quotes = core.fetch_quotes(client, list(unique.values()))
-        new_spot = _number((quotes.get(core.SPOT_REQUEST["ScripCode"]) or {}).get("LastRate"))
-        if new_spot is None:
-            raise RuntimeError("Could not read the NIFTY spot price (index code 999920000).")
-        if core.atm_strike(new_spot) == atm:
-            spot = new_spot
-            break
-        spot = new_spot
+                bits.append(f"{label} {_lakh(pair[index], True)}")
+        extra = f' <span style="opacity:.8">({" · ".join(bits)})</span>' if bits else ""
+        return f"{_lakh(oi['ce' if index == 0 else 'pe'])}{extra}"
 
-    rows = []
-    for strike in strikes:
-        pair = codes.get(strike)
-        ce_tick = quotes.get(pair[0]) if pair else None
-        pe_tick = quotes.get(pair[1]) if pair else None
-        ce_oi, ce_change = _oi_values(ce_tick)
-        pe_oi, pe_change = _oi_values(pe_tick)
-        rows.append({
-            "strike": strike,
-            "is_atm": strike == atm,
-            "ce_oi": ce_oi,
-            "ce_change": ce_change,
-            "pe_change": pe_change,
-            "pe_oi": pe_oi,
-        })
-    return {"expiry": expiry, "spot": spot, "atm": atm, "rows": rows}
+    text, colour = bias(oi["ce"], oi["pe"])
+    low, high = oi["strikes"][0], oi["strikes"][-1]
+    return (row(f"Cumulative OI CE ({low}–{high})", line(0))
+            + row(f"Cumulative OI PE ({low}–{high})", line(1))
+            + row("PE − CE OI", f"{_lakh(oi['pe'] - oi['ce'], True)} · {html.escape(text)}", colour, colour))
 
 
-def oi_totals(rows):
-    """Return totals only when every requested strike has a value."""
-    totals = {}
-    for key in ("ce_oi", "ce_change", "pe_change", "pe_oi"):
-        values = [row[key] for row in rows]
-        totals[key] = sum(values) if values and all(value is not None for value in values) else None
-    return totals
+# ---------------- stand-alone collector ----------------
+def main():
+    """Save an OI snapshot every 5 minutes (09:15-15:30) even when the dashboard is closed."""
+    from Option_chain.synthetic_future_panel import load_futures, take_panel
+    contracts, futures = load_contracts(), load_futures()
+    expiry, client, last_spot = upcoming_expiries(contracts)[0], _client_from_config(), None
+    print(f"Saving NIFTY OI snapshots for expiry {expiry} every {SLOT_MINUTES} minutes.")
+    while True:
+        now = datetime.now(INDIA_TIME)
+        if in_market_hours(now.replace(tzinfo=None)):
+            try:
+                data = take_panel(client, contracts, futures, expiry, last_spot)
+                last_spot = data["spot"]
+                saved = record_snapshot(data["oi"]["oi_map"], expiry, now)
+                print(f"{now:%H:%M:%S} CE OI {data['oi']['ce']:,.0f} PE OI {data['oi']['pe']:,.0f} "
+                      f"{'saved' if saved else 'skipped'}")
+            except Exception as error:
+                print(f"{now:%H:%M:%S} {error}")
+        time.sleep(30)
 
 
-def _fmt(value, signed=False):
-    if value is None:
-        return "—"
-    return f"{value:+,.0f}" if signed else f"{value:,.0f}"
-
-
-def _live_oi(client, contracts):
-    expiry = st.session_state.get("oi_expiry")
-    try:
-        data = take_oi_snapshot(
-            client, contracts, expiry, last_spot=st.session_state.get("oi_last_spot")
-        )
-        data["updated_at"] = datetime.now(core.INDIA_TIME)
-        st.session_state.oi_last_spot = data["spot"]
-        st.session_state.oi_data = data
-        st.session_state.oi_error = None
-    except Exception as error:
-        st.session_state.oi_error = str(error)
-
-    if st.session_state.get("oi_error"):
-        st.warning(st.session_state.oi_error)
-    data = st.session_state.get("oi_data")
-    if not data:
-        if not st.session_state.get("oi_error"):
-            st.info("Waiting for live OI quotes...")
-        return
-
-    rows = data["rows"]
-    totals = oi_totals(rows)
-    oi_values = [row["ce_oi"] for row in rows] + [row["pe_oi"] for row in rows]
-    if not any(value is not None for value in oi_values):
-        st.warning("5paisa returned option prices without OpenInterest values for these strikes.")
-    elif any(value is None for value in oi_values):
-        st.warning("Some strike OI values are unavailable; affected cumulative totals are withheld.")
-
-    pe_change, ce_change = totals["pe_change"], totals["ce_change"]
-    if pe_change is None or ce_change is None:
-        bias = "Unavailable"
-    elif pe_change > ce_change:
-        bias = "Bullish bias (PE ΔOI leads)"
-    elif ce_change > pe_change:
-        bias = "Bearish bias (CE ΔOI leads)"
-    else:
-        bias = "Balanced"
-
-    metrics = st.columns(5)
-    metrics[0].metric("CE cumulative OI", _fmt(totals["ce_oi"]))
-    metrics[1].metric("CE cumulative ΔOI", _fmt(ce_change, signed=True))
-    metrics[2].metric("PE cumulative OI", _fmt(totals["pe_oi"]))
-    metrics[3].metric("PE cumulative ΔOI", _fmt(pe_change, signed=True))
-    metrics[4].metric("OI bias · PE ΔOI − CE ΔOI", bias)
-
-    table = pd.DataFrame([{
-        "Call OI": row["ce_oi"],
-        "Call ΔOI": row["ce_change"],
-        "Strike": f'{row["strike"]:,}' + (" (ATM)" if row["is_atm"] else ""),
-        "Put ΔOI": row["pe_change"],
-        "Put OI": row["pe_oi"],
-    } for row in rows])
-    st.dataframe(table, use_container_width=True, hide_index=True)
-    st.caption(
-        f'NIFTY {data["spot"]:,.2f} · ATM {data["atm"]:,} · Expiry {data["expiry"]:%d %b %Y} · '
-        f'Updated {data["updated_at"]:%H:%M:%S} IST. '
-        "Cumulative totals cover ATM ±5 strikes. ΔOI is 5paisa's change from previous OI "
-        "(or current OI minus Prev_OI when available). PE ΔOI leading is only a bullish bias; "
-        "OI alone does not confirm market direction."
-    )
-
-
-@st.cache_data(show_spinner=False)
-def _contracts(path, mtime):
-    return core.load_contracts(path)
-
-
-def render_oi_tab(client):
-    path = core.SCRIP_MASTER_PATH
-    try:
-        contracts = _contracts(str(path), path.stat().st_mtime if path.exists() else 0)
-    except Exception as error:
-        st.error(f"Could not read scrip_master.csv: {error}")
-        return
-    expiries = core.upcoming_expiries(contracts)
-    if not expiries:
-        st.error("No upcoming NIFTY expiry in scrip_master.csv. Refresh the contract master.")
-        return
-    st.selectbox("Weekly expiry", expiries,
-                 format_func=lambda day: f"{day:%a %d %b %Y}", key="oi_expiry")
-    st.caption("Live option-chain OI around ATM: five strikes above and below, plus ATM.")
-    if hasattr(st, "fragment"):
-        st.fragment(run_every=REFRESH_SECONDS)(_live_oi)(client, contracts)
-    else:
-        _live_oi(client, contracts)
+if __name__ == "__main__":
+    main()

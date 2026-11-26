@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from Option_chain import synthetic_future as core
+from Option_chain import synthetic_future_oi as oi_view
 from Option_chain.synthetic_future import (
     INDIA_TIME, SPOT_REQUEST, STRIKE_STEP, atm_strike, fetch_quotes, option_codes,
     synthetic_future, upcoming_expiries,
@@ -65,7 +66,7 @@ def _leg(tick):
     ltp = float((tick or {}).get("LastRate") or 0)
     prev = float((tick or {}).get("PClose") or 0)
     chg = (ltp - prev) / prev * 100 if prev and ltp else None
-    return {"ltp": ltp or None, "prev": prev or None, "chg": chg}
+    return {"ltp": ltp or None, "prev": prev or None, "chg": chg, "oi": oi_view.oi_from_tick(tick)}
 
 
 def take_panel(client, contracts, futures, expiry, last_spot=None):
@@ -121,6 +122,7 @@ def take_panel(client, contracts, futures, expiry, last_spot=None):
         "future": fut_price, "future_expiry": future[0] if future else None,
         "basis": None if fut_price is None else fut_price - synthetic,
         "last_trade": last_trade, "chain": chain,
+        "oi": oi_view.summarize(chain, atm),
     }
 
 
@@ -151,6 +153,7 @@ def panel_html(d):
         _row("Future", future_text, TEAL, TEAL),
         _row("Future symbol", html.escape(future_name)),
         _row("Last option trade", html.escape(d["last_trade"] or "-")),
+        oi_view.rows_html(d, _row),
     ])
 
     cell = "padding:1px 2px;color:#fff;text-align:center;border:1px solid #fff;font-size:10px;line-height:1.2;white-space:nowrap;"
@@ -207,6 +210,12 @@ def _live(client, contracts, futures):
         data = take_panel(client, contracts, futures, st.session_state.get("pn_expiry"),
                           last_spot=st.session_state.get("pn_spot"))
         st.session_state.pn_spot = data["spot"]
+        try:  # cumulative OI: live change vs earlier snapshots, then save this slot's snapshot
+            today = datetime.now(INDIA_TIME).date()
+            data["oi_change"] = oi_view.changes(data["oi"], oi_view.load_snapshots(today))
+            oi_view.record_snapshot(data["oi"]["oi_map"], data["expiry"])
+        except Exception:  # OI is extra; never break the table
+            data["oi_change"] = {}
         st.session_state.pn_data = data
         st.session_state.pn_error = None
     except Exception as error:  # network / API hiccups must not break the page
