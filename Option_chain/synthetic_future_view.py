@@ -19,6 +19,7 @@ from Option_chain.synthetic_future import (
     load_history, record_reading, append_tick, load_ticks, last_tick_tokens, take_reading, upcoming_expiries, in_market_hours,
 )
 from Option_chain import synthetic_future as _core
+from Option_chain.synthetic_future_cum_intrinsic import render_cum_intrinsic
 
 LIVE_REFRESH_SECONDS = 1
 GREEN, RED, BLUE, ORANGE, PURPLE = "#16a36a", "#e34b4b", "#2563eb", "#ea580c", "#7c3aed"
@@ -312,8 +313,10 @@ def render_synthetic_tab(client):
             # would make Streamlit jump back to the first ("Live") tab.
             st.fragment(_controls)(expiries)
             st.fragment(run_every=LIVE_REFRESH_SECONDS)(_live)(client, contracts)
+            render_cum_intrinsic()  # cumulative intrinsic, refreshed every 15 s
             st.fragment(run_every=5)(_history)()
         else:  # old Streamlit: one pass per rerun
             _controls(expiries)
             _live(client, contracts)
+            render_cum_intrinsic()
             _history()
