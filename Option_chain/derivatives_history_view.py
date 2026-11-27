@@ -36,6 +36,12 @@ def _short(value):
 def _frame(height, low, high, times, fmt=None):
     """Axes, grid and time labels. Returns (svg_parts, x(i), y(v))."""
     n = len(times)
+    if n == 0:
+        return [], (lambda i: LEFT), (lambda v: TOP)
+    if high == low:
+        pad = abs(high) * 0.1 if abs(high) else 1
+        low -= pad
+        high += pad
     inner_w, inner_h = W - LEFT - RIGHT, height - TOP - BOTTOM
     if high == low:  # a single value or all zeros: give the axis some height
         low, high = low - 1, high + 1

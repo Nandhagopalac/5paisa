@@ -2,8 +2,10 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+import pandas as pd
 
 from Option_chain.derivatives_history import INDIA_TIME, load_history, record_sample
+from Option_chain.derivatives_history_view import bar_chart, line_chart
 
 
 def at(hour, minute, second=0):
@@ -40,6 +42,17 @@ class DerivativesHistoryTests(unittest.TestCase):
 
     def test_empty_when_nothing_saved(self):
         self.assertTrue(load_history(self.path).empty)
+
+    def test_charts_survive_all_zero_values(self):
+        frame = pd.DataFrame({
+            "Time": pd.to_datetime(["2026-11-26 09:10:00"]),
+            "CE": [0],
+            "PE": [0],
+            "Lead": [0],
+        })
+
+        self.assertIn("<svg", line_chart(frame, "CE vs PE volume"))
+        self.assertIn("<svg", bar_chart(frame, ["Lead"], "Who leads"))
 
 
 class EmptyReadingTests(unittest.TestCase):
