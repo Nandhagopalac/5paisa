@@ -45,7 +45,7 @@ def _tone(value):
 
 # ---------------- live ----------------
 def _cell(label, value, sub="", color="#0f172a"):
-    return (f'<div style="min-width:110px"><div style="font-size:10px;color:#64748b">{html.escape(label)}</div>'
+    return (f'<div style="min-width:84px"><div style="font-size:10px;color:#64748b">{html.escape(label)}</div>'
             f'<div style="font-size:15px;font-weight:700;color:{color};font-variant-numeric:tabular-nums">{value}</div>'
             f'<div style="font-size:10px;color:#64748b">{sub}</div></div>')
 
@@ -107,7 +107,7 @@ def _calc_table(rows, max_height=None):
             f'<td style="{td}background:{put_bg};text-align:center">{r["pe_state"]}</td>'
             f'<td style="{td}background:{put_bg}">{put_future}</td>'
             f'<td style="{td}text-align:left;color:#64748b">{html.escape(r["how"])}</td></tr>')
-    box = f"max-height:{max_height}px;overflow:auto;" if max_height else ""
+    box = f"max-height:{max_height}px;overflow:auto;" if max_height else "overflow-x:auto;"
     return (f'<div style="{box}border:1px solid #dde5f0;border-radius:6px;background:#fff">'
             '<table style="border-collapse:collapse;width:100%;font-family:sans-serif">'
             f'<thead style="position:sticky;top:0;z-index:1">{head}</thead><tbody>{"".join(body)}</tbody></table></div>')
@@ -131,7 +131,7 @@ def _live_card(rows):
          "strike": x["strike"], "ce": x["ce"], "pe": x["pe"]} for x in rows])
     return (
         '<div style="background:#fff;border:1px solid #dde5f0;border-radius:8px;padding:8px 12px">'
-        f'<div style="display:flex;gap:28px;flex-wrap:wrap">{top}</div>'
+        f'<div style="display:flex;gap:10px 22px;flex-wrap:wrap">{top}</div>'
         '<div style="height:8px"></div>' + _calc_table(shown) +
         f'<div style="font-size:10px;color:#64748b;margin-top:4px">'
         f'ATM always follows the spot. Intrinsic = CE − PE on the ITM leg (the leg with the higher premium); '

@@ -81,12 +81,12 @@ def _badge(label, previous, current):
     text = signal(previous, current)
     detail = "—" if previous is None else f"{previous:,.2f} → {current:,.2f}"
     if text == "BUY":
-        box = ('<div style="background:#16a36a;color:#fff;font-weight:800;font-size:15px;padding:3px 12px;'
+        box = ('<div style="background:#16a36a;color:#fff;font-weight:800;font-size:13px;padding:2px 8px;'
                'border-radius:6px;display:inline-block;letter-spacing:.5px">✔ BUY</div>')
     else:
-        box = ('<div style="background:#f1f5f9;color:#94a3b8;font-weight:600;font-size:13px;padding:3px 12px;'
+        box = ('<div style="background:#f1f5f9;color:#94a3b8;font-weight:600;font-size:11px;padding:2px 8px;'
                'border-radius:6px;display:inline-block">NO BUY</div>')
-    return (f'<div style="min-width:130px"><div style="font-size:10px;color:#64748b">{html.escape(label)}</div>'
+    return (f'<div style="min-width:0"><div style="font-size:9px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{html.escape(label)}</div>'
             f'{box}<div style="font-size:10px;color:#64748b;margin-top:2px">{detail}</div></div>')
 
 
@@ -95,18 +95,18 @@ def cum_html(state, now):
     bias = "PUT intrinsic leads" if net > 0 else "CALL intrinsic leads" if net < 0 else "Balanced"
 
     def cell(label, value, color="#0f172a", sub=""):
-        return (f'<div style="min-width:130px"><div style="font-size:10px;color:#64748b">{html.escape(label)}</div>'
-                f'<div style="font-size:15px;font-weight:700;color:{color}">{value}</div>'
+        return (f'<div style="min-width:0"><div style="font-size:9px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{html.escape(label)}</div>'
+                f'<div style="font-size:13px;font-weight:700;color:{color}">{value}</div>'
                 f'<div style="font-size:10px;color:#64748b">{html.escape(sub)}</div></div>')
     since = state["since"] or "—"
     return (
-        '<div style="background:#fff;border:1px solid #dde5f0;border-radius:8px;padding:8px 12px;margin-top:6px">'
-        '<div style="display:flex;gap:28px;flex-wrap:wrap">'
+        '<div style="background:#fff;border:1px solid #dde5f0;border-radius:8px;padding:6px 10px;margin-top:6px">'
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px 14px">'
         + cell("Cumulative CALL intrinsic", f'{state["ce"]:,.2f}', "#16a36a", "sum of every second")
         + cell("Cumulative PUT intrinsic", f'{state["pe"]:,.2f}', "#e34b4b", "sum of every second")
         + cell("PUT − CALL", f'{net:+,.2f}', "#2563eb", bias)
-        + _badge("CALL intrinsic vs previous second", state.get("prev_ce"), state.get("cur_ce"))
-        + _badge("PUT intrinsic vs previous second", state.get("prev_pe"), state.get("cur_pe"))
+        + _badge("CALL vs previous sec", state.get("prev_ce"), state.get("cur_ce"))
+        + _badge("PUT vs previous sec", state.get("prev_pe"), state.get("cur_pe"))
         + cell("Seconds counted", f'{state["count"]:,}', sub=f"since {since} · now {now:%H:%M:%S}")
         + '</div></div>')
 
