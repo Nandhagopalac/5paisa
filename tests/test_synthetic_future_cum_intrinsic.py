@@ -75,3 +75,27 @@ class SignalTests(unittest.TestCase):
         ci._state.clear()
         s = ci.add_second(at(9, 16, 0), 6, 0, extra={})
         self.assertEqual(s["sig_ce"], "BUY")
+
+
+class ZeroSkipTests(unittest.TestCase):
+    def setUp(self):
+        ci._state.clear()
+        self.tmp = tempfile.TemporaryDirectory()
+        ci.STATE_DIR = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_zeros_never_signal_and_are_skipped(self):
+        self.assertEqual(ci.signal([1.0] * 10, 0), "NO BUY")
+        n = 0
+        for v in [1, 2, 2, 2, 2, 2, 2, 2, 2, 2]:   # 10 non-zero entries fill the window
+            ci.add_second(at(9, 15, n), v, 0)
+            n += 1
+        for _ in range(15):                          # a long run of zeros changes nothing
+            s = ci.add_second(at(9, 15, n), 0, 0)
+            n += 1
+            self.assertEqual(s["sig_ce"], "NO BUY")
+        self.assertEqual(len(s["win_ce"]), 10)
+        s = ci.add_second(at(9, 15, n), 3, 0)
+        self.assertEqual(s["sig_ce"], "BUY")

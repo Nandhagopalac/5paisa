@@ -37,9 +37,10 @@ def _recent(day):
     """Last LOOKBACK CE / PE intrinsic values from today's log (so a restart keeps the window)."""
     try:
         with open(log_path(day), encoding="utf-8") as handle:
-            lines = handle.read().splitlines()[1:][-LOOKBACK:]
+            lines = handle.read().splitlines()[1:][-LOOKBACK * 60:]
         columns = [line.split(",") for line in lines]
-        return ([float(c[5]) for c in columns], [float(c[6]) for c in columns])
+        return ([v for v in (float(c[5]) for c in columns) if v > 0],
+                [v for v in (float(c[6]) for c in columns) if v > 0])
     except (OSError, ValueError, IndexError):
         return [], []
 
@@ -106,8 +107,11 @@ def add_second(now, ce_intrinsic, pe_intrinsic, only_market_hours=True, extra=No
             state["sig_pe"] = signal(state["win_pe"], state["cur_pe"])
             state["ref_ce"] = max(state["win_ce"]) if len(state["win_ce"]) >= LOOKBACK else None
             state["ref_pe"] = max(state["win_pe"]) if len(state["win_pe"]) >= LOOKBACK else None
-            state["win_ce"] = (state["win_ce"] + [state["cur_ce"]])[-LOOKBACK:]
-            state["win_pe"] = (state["win_pe"] + [state["cur_pe"]])[-LOOKBACK:]
+            # zero intrinsic (the leg is out of the money) is skipped: it neither signals nor enters the window
+            if state["cur_ce"] > 0:
+                state["win_ce"] = (state["win_ce"] + [state["cur_ce"]])[-LOOKBACK:]
+            if state["cur_pe"] > 0:
+                state["win_pe"] = (state["win_pe"] + [state["cur_pe"]])[-LOOKBACK:]
             state["ce"] += float(ce_intrinsic)
             state["pe"] += float(pe_intrinsic)
             state["count"] += 1
@@ -121,11 +125,12 @@ def add_second(now, ce_intrinsic, pe_intrinsic, only_market_hours=True, extra=No
 
 
 def signal(window, current):
-    """'BUY' when the current intrinsic is above every one of the last LOOKBACK entries.
+    """'BUY' when the current intrinsic is above every one of the last LOOKBACK non-zero entries.
 
+    Zero values (leg out of the money) are skipped: they never signal and never enter the window.
     Needs a full window of LOOKBACK earlier entries; before that it stays 'NO BUY' (warming up)."""
-    window = list(window or [])
-    if current is None or len(window) < LOOKBACK:
+    window = [v for v in (window or []) if v > 0]
+    if current is None or current <= 0 or len(window) < LOOKBACK:
         return "NO BUY"
     return "BUY" if current > max(window[-LOOKBACK:]) else "NO BUY"
 

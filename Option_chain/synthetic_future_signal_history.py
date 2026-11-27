@@ -103,7 +103,7 @@ def _body():
     st.markdown(_table(shown), unsafe_allow_html=True)
     st.download_button("Download day as CSV", frame.to_csv(index=False), f"intrinsic_signals_{day}.csv", "text/csv")
     st.caption("BUY = this second's intrinsic value is higher than each of the last 10 entries (CE and PE judged "
-               "separately; the first 10 seconds of the day only fill the window). It is a rule on one number, "
+               "separately; zero values are skipped, and the first 10 non-zero values only fill the window). It is a rule on one number, "
                "not a prediction or advice.")
 
 
