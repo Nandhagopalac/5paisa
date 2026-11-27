@@ -23,13 +23,14 @@ class SignalHistoryTests(unittest.TestCase):
 
     def test_log_and_counts(self):
         extra = {"spot": 25700.5, "strike": 25700, "ce": 150, "pe": 160}
-        for sec, (ce, pe) in enumerate([(10, 0), (15, 0), (12, 3), (20, 4)]):
-            ci.add_second(at(sec), ce, pe, extra=extra)
+        values = [(1, 1)] * 20 + [(5, 0), (3, 3), (9, 4)]
+        for sec, (ce, pe) in enumerate(values):
+            ci.add_second(datetime(2026, 11, 27, 9, 15, sec, tzinfo=INDIA_TIME), ce, pe, extra=extra)
         frame = sh.load_log("2026-11-27")
-        self.assertEqual(len(frame), 4)
+        self.assertEqual(len(frame), 23)
         summary = sh.summarize(frame)
         self.assertEqual((summary["ce_buys"], summary["pe_buys"], summary["both"]), (2, 2, 1))
-        self.assertEqual(float(frame["cum_ce"].iloc[-1]), 57.0)
+        self.assertEqual(float(frame["cum_ce"].iloc[-1]), 37.0)
         self.assertEqual(sh.available_days(), ["2026-11-27"])
         self.assertIn("BUY", sh._table(frame))
 

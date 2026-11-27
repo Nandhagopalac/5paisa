@@ -22,6 +22,7 @@ from Option_chain.synthetic_future import (
 
 REFRESH_SECONDS = 1
 SAVE_EVERY_SECONDS = 5
+LOOKBACK = 20  # BUY needs the current value above each of the last 20 entries
 STATE_DIR = HISTORY_PATH.parent
 
 _lock = threading.Lock()
@@ -32,13 +33,26 @@ def _path(day):
     return STATE_DIR / f"nifty_cum_intrinsic_{day}.json"
 
 
+def _recent(day):
+    """Last LOOKBACK CE / PE intrinsic values from today's log (so a restart keeps the window)."""
+    try:
+        with open(log_path(day), encoding="utf-8") as handle:
+            lines = handle.read().splitlines()[1:][-LOOKBACK:]
+        columns = [line.split(",") for line in lines]
+        return ([float(c[5]) for c in columns], [float(c[6]) for c in columns])
+    except (OSError, ValueError, IndexError):
+        return [], []
+
+
 def _load(day):
     try:
         data = json.loads(_path(day).read_text())
         return {"ce": float(data["ce"]), "pe": float(data["pe"]), "count": int(data["count"]),
-                "since": data.get("since", ""), "last_second": data.get("last_second", ""), "saved_at": 0.0}
+                "since": data.get("since", ""), "last_second": data.get("last_second", ""), "saved_at": 0.0,
+                "win_ce": _recent(day)[0], "win_pe": _recent(day)[1]}
     except (OSError, ValueError, KeyError):
-        return {"ce": 0.0, "pe": 0.0, "count": 0, "since": "", "last_second": "", "saved_at": 0.0}
+        return {"ce": 0.0, "pe": 0.0, "count": 0, "since": "", "last_second": "", "saved_at": 0.0,
+                "win_ce": [], "win_pe": []}
 
 
 def _save(day, state):
@@ -62,7 +76,7 @@ def _append_log(day, now, state, extra):
     """One line per counted second: prices, intrinsic, BUY / NO BUY for CE and PE, running totals."""
     row = [now.strftime("%H:%M:%S"), extra.get("spot", ""), extra.get("strike", ""),
            extra.get("ce", ""), extra.get("pe", ""), state["cur_ce"], state["cur_pe"],
-           signal(state["prev_ce"], state["cur_ce"]), signal(state["prev_pe"], state["cur_pe"]),
+           state["sig_ce"], state["sig_pe"],
            round(state["ce"], 2), round(state["pe"], 2)]
     try:
         path = log_path(day)
@@ -84,9 +98,16 @@ def add_second(now, ce_intrinsic, pe_intrinsic, only_market_hours=True, extra=No
             del _state[old]  # a new day starts from zero
         state = _state.setdefault(day, _load(day))
         if second != state["last_second"] and (in_market_hours(now) or not only_market_hours):
-            # signal: this second's intrinsic vs the previous second's, CE and PE separately
-            state["prev_ce"], state["prev_pe"] = state.get("cur_ce"), state.get("cur_pe")
+            # signal: this second's intrinsic vs the last LOOKBACK entries, CE and PE separately
+            state["win_ce"], state["win_pe"] = state.get("win_ce", []), state.get("win_pe", [])
             state["cur_ce"], state["cur_pe"] = float(ce_intrinsic), float(pe_intrinsic)
+            # compared with the window BEFORE this second is added to it
+            state["sig_ce"] = signal(state["win_ce"], state["cur_ce"])
+            state["sig_pe"] = signal(state["win_pe"], state["cur_pe"])
+            state["ref_ce"] = max(state["win_ce"]) if len(state["win_ce"]) >= LOOKBACK else None
+            state["ref_pe"] = max(state["win_pe"]) if len(state["win_pe"]) >= LOOKBACK else None
+            state["win_ce"] = (state["win_ce"] + [state["cur_ce"]])[-LOOKBACK:]
+            state["win_pe"] = (state["win_pe"] + [state["cur_pe"]])[-LOOKBACK:]
             state["ce"] += float(ce_intrinsic)
             state["pe"] += float(pe_intrinsic)
             state["count"] += 1
@@ -99,14 +120,21 @@ def add_second(now, ce_intrinsic, pe_intrinsic, only_market_hours=True, extra=No
         return dict(state)
 
 
-def signal(previous, current):
-    """'BUY' when the intrinsic value rose versus the previous second, otherwise 'NO BUY'."""
-    return "BUY" if previous is not None and current is not None and current > previous else "NO BUY"
+def signal(window, current):
+    """'BUY' when the current intrinsic is above every one of the last LOOKBACK entries.
+
+    Needs a full window of LOOKBACK earlier entries; before that it stays 'NO BUY' (warming up)."""
+    window = list(window or [])
+    if current is None or len(window) < LOOKBACK:
+        return "NO BUY"
+    return "BUY" if current > max(window[-LOOKBACK:]) else "NO BUY"
 
 
-def _badge(label, previous, current):
-    text = signal(previous, current)
-    detail = "—" if previous is None else f"{previous:,.2f} → {current:,.2f}"
+def _badge(label, text, reference, current, filled):
+    if reference is None:
+        detail = f"warming up {filled}/{LOOKBACK}"
+    else:
+        detail = f"{current:,.2f} vs top of last {LOOKBACK}: {reference:,.2f}"
     if text == "BUY":
         box = ('<div style="background:#16a36a;color:#fff;font-weight:800;font-size:13px;padding:2px 8px;'
                'border-radius:6px;display:inline-block;letter-spacing:.5px">✔ BUY</div>')
@@ -132,8 +160,10 @@ def cum_html(state, now):
         + cell("Cumulative CALL intrinsic", f'{state["ce"]:,.2f}', "#16a36a", "sum of every second")
         + cell("Cumulative PUT intrinsic", f'{state["pe"]:,.2f}', "#e34b4b", "sum of every second")
         + cell("PUT − CALL", f'{net:+,.2f}', "#2563eb", bias)
-        + _badge("CALL vs previous sec", state.get("prev_ce"), state.get("cur_ce"))
-        + _badge("PUT vs previous sec", state.get("prev_pe"), state.get("cur_pe"))
+        + _badge(f"CALL vs last {LOOKBACK}", state.get("sig_ce", "NO BUY"), state.get("ref_ce"),
+                 state.get("cur_ce"), len(state.get("win_ce", [])))
+        + _badge(f"PUT vs last {LOOKBACK}", state.get("sig_pe", "NO BUY"), state.get("ref_pe"),
+                 state.get("cur_pe"), len(state.get("win_pe", [])))
         + cell("Seconds counted", f'{state["count"]:,}', sub=f"since {since} · now {now:%H:%M:%S}")
         + '</div></div>')
 

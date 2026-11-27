@@ -102,8 +102,9 @@ def _body():
     shown = frame.iloc[::-1] if rows == "All" else frame.iloc[::-1].head(int(rows))
     st.markdown(_table(shown), unsafe_allow_html=True)
     st.download_button("Download day as CSV", frame.to_csv(index=False), f"intrinsic_signals_{day}.csv", "text/csv")
-    st.caption("BUY = this second's intrinsic value is higher than the previous second's (CE and PE judged "
-               "separately). It is a rule on one number, not a prediction or advice.")
+    st.caption("BUY = this second's intrinsic value is higher than each of the last 20 entries (CE and PE judged "
+               "separately; the first 20 seconds of the day only fill the window). It is a rule on one number, "
+               "not a prediction or advice.")
 
 
 def render_signal_history_tab():

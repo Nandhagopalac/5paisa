@@ -51,10 +51,27 @@ class SignalTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         ci.STATE_DIR = Path(self.tmp.name)
 
-    def test_buy_when_rising_else_no_buy(self):
-        ci.add_second(at(9, 15, 0), 10, 5)
-        s = ci.add_second(at(9, 15, 1), 15, 3)
-        self.assertEqual(ci.signal(s["prev_ce"], s["cur_ce"]), "BUY")
-        self.assertEqual(ci.signal(s["prev_pe"], s["cur_pe"]), "NO BUY")
-        self.assertEqual(ci.signal(10, 10), "NO BUY")
-        self.assertEqual(ci.signal(None, 4), "NO BUY")
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_signal_rule(self):
+        window = [5.0] * 19 + [10.0]
+        self.assertEqual(ci.signal(window, 11), "BUY")
+        self.assertEqual(ci.signal(window, 10), "NO BUY")       # equal to the highest: no buy
+        self.assertEqual(ci.signal(window[:19], 99), "NO BUY")  # window not full yet
+        self.assertEqual(ci.signal(window, None), "NO BUY")
+
+    def test_needs_to_beat_all_last_20_not_just_the_last(self):
+        values = [10] * 20 + [3, 8]   # 8 beats the previous entry (3) but not the 10s
+        for i, v in enumerate(values):
+            s = ci.add_second(at(9, 15, i), v, 0)
+        self.assertEqual(s["sig_ce"], "NO BUY")
+        s = ci.add_second(at(9, 16, 0), 11, 0)
+        self.assertEqual(s["sig_ce"], "BUY")
+
+    def test_window_restored_after_restart(self):
+        for i in range(21):
+            ci.add_second(at(9, 15, i), 5, 0, extra={})
+        ci._state.clear()
+        s = ci.add_second(at(9, 16, 0), 6, 0, extra={})
+        self.assertEqual(s["sig_ce"], "BUY")
