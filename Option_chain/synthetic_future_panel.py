@@ -9,7 +9,7 @@ Everything refreshes every second from 5paisa's REST market feed.
 """
 import html
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pandas as pd
 import streamlit as st
@@ -111,6 +111,9 @@ def take_panel(client, contracts, futures, expiry, last_spot=None):
     if ce is None or pe is None:
         raise RuntimeError(f"No price for the ATM {atm} CE/PE yet.")
 
+    oi_diag = oi_view.fill_missing_oi(client, chain, expiry)  # OI usually comes from the option chain
+    oi_summary = oi_view.summarize(chain, atm)
+    oi_summary["diag"] = oi_diag
     synthetic = synthetic_future(atm, ce, pe)
     fut_price = None
     if future:
@@ -122,7 +125,7 @@ def take_panel(client, contracts, futures, expiry, last_spot=None):
         "future": fut_price, "future_expiry": future[0] if future else None,
         "basis": None if fut_price is None else fut_price - synthetic,
         "last_trade": last_trade, "chain": chain,
-        "oi": oi_view.summarize(chain, atm),
+        "oi": oi_summary,
     }
 
 

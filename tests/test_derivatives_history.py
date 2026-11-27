@@ -42,5 +42,25 @@ class DerivativesHistoryTests(unittest.TestCase):
         self.assertTrue(load_history(self.path).empty)
 
 
+class EmptyReadingTests(unittest.TestCase):
+    def test_zero_readings_are_not_saved_and_old_ones_are_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "h.csv"
+            when = datetime(2026, 11, 26, 9, 14, tzinfo=INDIA_TIME)
+            self.assertFalse(record_sample({"Call": 0, "Put": 0}, {"Call": 0, "Put": 0}, "t", {}, path, when))
+            path.write_text("recorded_at,nse_timestamp,ce,pe,ce_rows,pe_rows,market_status\n"
+                            "2026-11-26 09:14:00,t,0,0,0,0,\n"
+                            "2026-11-26 09:30:00,u,500,400,5,5,\n")
+            self.assertEqual(len(load_history(path)), 1)
+
+    def test_chart_with_one_flat_value_does_not_divide_by_zero(self):
+        import pandas as pd
+        from Option_chain.derivatives_history_view import bar_chart, line_chart
+        frame = pd.DataFrame({"Time": [datetime(2026, 11, 26, 9, 14)], "CE": [0], "PE": [0],
+                              "Lead": [0], "CE added": [None], "PE added": [None]})
+        self.assertIn("<svg", line_chart(frame, "x"))
+        self.assertIn("<svg", bar_chart(frame, ["Lead"], "x"))
+
+
 if __name__ == "__main__":
     unittest.main()

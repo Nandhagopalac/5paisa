@@ -17,7 +17,7 @@ import csv
 import html
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -45,6 +45,77 @@ def oi_from_tick(tick):
             except (TypeError, ValueError):
                 continue
     return None
+
+
+# ---------------- OI from 5paisa's option-chain call ----------------
+# The plain quote (fetch_market_feed_scrip) usually carries no OI. client.get_option_chain does.
+_EXPIRY_TS = {}      # expiry date -> timestamp 5paisa expects
+_CHAIN_CACHE = {}    # expiry date -> (fetched at, {(strike, "CE"/"PE"): oi}, diagnostic text)
+CHAIN_MAX_AGE_SECONDS = 5
+_STRIKE_KEYS = ("StrikeRate", "StrikePrice", "Strike")
+_TYPE_KEYS = ("CPType", "OptionType", "Type")
+
+
+def _epoch_ms(value):
+    """'/Date(1764543000000+0530)/' or 1764543000000 -> milliseconds, or None."""
+    import re
+    match = re.search(r"(\d{10,})", str(value))
+    return int(match.group(1)) if match else None
+
+
+def expiry_timestamp(client, expiry, underlying="NIFTY"):
+    """The expiry timestamp get_option_chain wants for `expiry` (a date), from get_expiry."""
+    if expiry in _EXPIRY_TS:
+        return _EXPIRY_TS[expiry]
+    response = client.get_expiry("N", underlying) or {}
+    for item in response.get("Expiry") or []:
+        ms = _epoch_ms(item.get("ExpiryDate"))
+        if ms is None:
+            continue
+        moment = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+        if expiry in (moment.astimezone(INDIA_TIME).date(), moment.date()):
+            _EXPIRY_TS[expiry] = ms
+            return ms
+    raise RuntimeError(f"5paisa lists no NIFTY expiry for {expiry}.")
+
+
+def chain_oi(client, expiry, underlying="NIFTY", now=None):
+    """({(strike, 'CE'|'PE'): oi}, diagnostic) from get_option_chain, cached for a few seconds."""
+    now = now or time.time()
+    cached = _CHAIN_CACHE.get(expiry)
+    if cached and now - cached[0] < CHAIN_MAX_AGE_SECONDS:
+        return cached[1], cached[2]
+    oi_map, diag = {}, ""
+    try:
+        response = client.get_option_chain("N", underlying, expiry_timestamp(client, expiry, underlying)) or {}
+        rows = response.get("Options") or []
+        for row in rows:
+            strike = next((row[k] for k in _STRIKE_KEYS if row.get(k) not in (None, "")), None)
+            kind = str(next((row[k] for k in _TYPE_KEYS if row.get(k)), "")).upper()
+            value = oi_from_tick(row)
+            if strike is not None and kind in ("CE", "PE") and value is not None:
+                oi_map[(float(strike), kind)] = value
+        if not oi_map:
+            diag = (f"option chain has {len(rows)} rows, fields: " + ", ".join(sorted(rows[0])[:25])
+                    if rows else f"option chain empty (keys: {', '.join(sorted(response)) or 'none'})")
+    except Exception as error:  # OI is extra; the table must still work
+        diag = f"option chain call failed: {error}"
+    _CHAIN_CACHE[expiry] = (now, oi_map, diag)
+    return oi_map, diag
+
+
+def fill_missing_oi(client, chain, expiry):
+    """Fill leg['oi'] on the panel chain from the option chain where the quote had none.
+
+    Returns a diagnostic string ('' when everything is filled)."""
+    if all(leg.get("oi") is not None for row in chain for leg in (row["ce"], row["pe"])):
+        return ""
+    oi_map, diag = chain_oi(client, expiry)
+    for row in chain:
+        for kind in ("ce", "pe"):
+            if row[kind].get("oi") is None:
+                row[kind]["oi"] = oi_map.get((float(row["strike"]), kind.upper()))
+    return diag
 
 
 # ---------------- calculation ----------------
@@ -192,7 +263,8 @@ def rows_html(d, row):
     """Extra summary rows for panel_html: cumulative OI CE, PE and the bias. `row` = panel's _row."""
     oi = d.get("oi")
     if not oi or not oi["available"]:
-        return row("Cumulative OI (ATM ±3)", "OI not in the quote feed")
+        reason = html.escape((oi or {}).get("diag") or "")
+        return row("Cumulative OI (ATM ±3)", "OI not in the quote feed" + (f"<br><small>{reason[:220]}</small>" if reason else ""))
     delta = d.get("oi_change") or {}
 
     def line(index):

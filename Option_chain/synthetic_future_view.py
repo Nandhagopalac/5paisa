@@ -6,17 +6,16 @@ History part: one reading every 5 minutes from 09:15 to 15:30 (see synthetic_fut
 Charts are inline SVG (no altair dependency).
 """
 import html
-import time
 from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
 from Option_chain.derivatives_history_view import (
-    BOTTOM, GRID, LEFT, RIGHT, TEXT, TOP, W, _frame, _wrap,
+    BOTTOM, LEFT, RIGHT, TOP, W, _frame, _wrap,
 )
 from Option_chain.synthetic_future import (
-    HISTORY_PATH, INDIA_TIME, SLOT_MINUTES, STRIKE_STEP, atm_strike, load_contracts,
+    INDIA_TIME, SLOT_MINUTES, STRIKE_STEP, atm_strike, load_contracts,
     load_history, record_reading, append_tick, load_ticks, last_tick_tokens, take_reading, upcoming_expiries, in_market_hours,
 )
 from Option_chain import synthetic_future as _core

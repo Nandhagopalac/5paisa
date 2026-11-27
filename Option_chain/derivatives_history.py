@@ -48,6 +48,8 @@ def record_sample(totals, row_counts, timestamp, market_status, path=HISTORY_PAT
     """
     now = now or datetime.now(INDIA_TIME)
     path = Path(path)
+    if not (totals.get("Call") or totals.get("Put")):
+        return False  # NSE sends 0 / 0 before the market opens: nothing worth saving
     nse_stamp = str(timestamp or "")
     last = _last_row(path)
     if last:
@@ -84,6 +86,7 @@ def load_history(path=HISTORY_PATH):
         "PE": pd.to_numeric(raw["pe"], errors="coerce"),
         "Status": raw["market_status"].fillna(""),
     }).dropna(subset=["Time", "CE", "PE"])
+    frame = frame[(frame["CE"] > 0) | (frame["PE"] > 0)]  # ignore empty pre-open readings
     frame["Lead"] = frame["CE"] - frame["PE"]
     return frame.sort_values("Time").reset_index(drop=True)
 
