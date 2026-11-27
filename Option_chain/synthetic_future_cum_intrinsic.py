@@ -50,7 +50,33 @@ def _save(day, state):
         pass  # the in-memory total still works
 
 
-def add_second(now, ce_intrinsic, pe_intrinsic, only_market_hours=True):
+LOG_COLUMNS = ["time", "spot", "strike", "ce", "pe", "ce_intrinsic", "pe_intrinsic",
+               "ce_signal", "pe_signal", "cum_ce", "cum_pe"]
+
+
+def log_path(day):
+    return STATE_DIR / f"nifty_intrinsic_signals_{day}.csv"
+
+
+def _append_log(day, now, state, extra):
+    """One line per counted second: prices, intrinsic, BUY / NO BUY for CE and PE, running totals."""
+    row = [now.strftime("%H:%M:%S"), extra.get("spot", ""), extra.get("strike", ""),
+           extra.get("ce", ""), extra.get("pe", ""), state["cur_ce"], state["cur_pe"],
+           signal(state["prev_ce"], state["cur_ce"]), signal(state["prev_pe"], state["cur_pe"]),
+           round(state["ce"], 2), round(state["pe"], 2)]
+    try:
+        path = log_path(day)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        new = not path.is_file() or path.stat().st_size == 0
+        with open(path, "a", encoding="utf-8", newline="") as handle:
+            if new:
+                handle.write(",".join(LOG_COLUMNS) + "\n")
+            handle.write(",".join(str(v) for v in row) + "\n")
+    except OSError:
+        pass  # the live totals still work
+
+
+def add_second(now, ce_intrinsic, pe_intrinsic, only_market_hours=True, extra=None):
     """Add this second's intrinsic to today's running totals (once per second) and return them."""
     day, second = now.date().isoformat(), now.strftime("%H:%M:%S")
     with _lock:
@@ -66,6 +92,7 @@ def add_second(now, ce_intrinsic, pe_intrinsic, only_market_hours=True):
             state["count"] += 1
             state["last_second"] = second
             state["since"] = state["since"] or second
+            _append_log(day, now, state, extra or {})
             if state["saved_at"] == 0.0 or now.timestamp() - state["saved_at"] >= SAVE_EVERY_SECONDS:
                 state["saved_at"] = now.timestamp()
                 _save(day, state)
@@ -116,7 +143,8 @@ def _render(live_rows):
     atm = next((r for r in (live_rows or []) if r.get("mode") == "ATM"), None)
     if atm:
         values = leg_values(atm["strike"], atm["ce"], atm["pe"])
-        state = add_second(now, values["ce_intrinsic"], values["pe_intrinsic"])
+        state = add_second(now, values["ce_intrinsic"], values["pe_intrinsic"],
+                           extra={k: atm.get(k, "") for k in ("spot", "strike", "ce", "pe")})
     else:
         state = dict(_state.get(now.date().isoformat()) or _load(now.date().isoformat()))
     st.markdown(cum_html(state, now), unsafe_allow_html=True)

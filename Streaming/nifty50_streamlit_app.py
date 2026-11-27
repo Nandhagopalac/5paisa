@@ -39,6 +39,13 @@ except Exception as _panel_import_error:  # keep the live dashboard working
 
     def render_panel_tab(_client):
         st.error(f"Synthetic future table could not load: {_PANEL_IMPORT_ERROR}")
+try:
+    from Option_chain.synthetic_future_signal_history import render_signal_history_tab
+except Exception as _signal_import_error:  # keep the live dashboard working
+    _SIGNAL_IMPORT_ERROR = _signal_import_error
+
+    def render_signal_history_tab():
+        st.error(f"Signal history tab could not load: {_SIGNAL_IMPORT_ERROR}")
 from Option_chain.nse_equity_derivatives_volume import (
     fetch_market_data,
     format_indian,
@@ -742,8 +749,12 @@ def main():
                 st.session_state.req_list,
             ) = load_nifty50_data()
 
-    live_tab, synthetic_tab, panel_tab = st.tabs(
-        ["📊 Live", "🧭 Synthetic future & strike monitor", "🧮 Synthetic future table"])
+    live_tab, synthetic_tab, panel_tab, signal_tab = st.tabs(
+        ["📊 Live", "🧭 Synthetic future & strike monitor", "🧮 Synthetic future table",
+         "📈 Intrinsic signal history"])
+
+    with signal_tab:
+        render_signal_history_tab()
 
     with panel_tab:
         render_panel_tab(st.session_state.client)
