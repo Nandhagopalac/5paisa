@@ -44,9 +44,9 @@ def _table(frame):
              "Cum CE", "Cum PE"]
     body = []
 
-    def sig(value):
+    def sig(value, leg):
         if value == "BUY":
-            return f'<td style="{td}background:{GREEN};color:#fff;font-weight:800;text-align:center">✔ BUY</td>'
+            return f'<td style="{td}background:{GREEN};color:#fff;font-weight:800;text-align:center">✔ {leg} BUY</td>'
         return f'<td style="{td}color:#94a3b8;text-align:center">NO BUY</td>'
 
     def num(value):
@@ -59,9 +59,15 @@ def _table(frame):
             f'<tr><td style="{td}text-align:left">{html.escape(str(r.time))}</td><td style="{td}">{num(r.spot)}</td>'
             f'<td style="{td}">{num(r.strike).replace(".00", "")}</td><td style="{td}">{num(r.ce)}</td>'
             f'<td style="{td}">{num(r.pe)}</td><td style="{td}">{num(r.ce_intrinsic)}</td>'
-            f'<td style="{td}">{num(r.pe_intrinsic)}</td>{sig(r.ce_signal)}{sig(r.pe_signal)}'
+            f'<td style="{td}">{num(r.pe_intrinsic)}</td>{sig(r.ce_signal, 'CE')}{sig(r.pe_signal, 'PE')}'
             f'<td style="{td}">{num(r.cum_ce)}</td><td style="{td}">{num(r.cum_pe)}</td></tr>')
-    head = "".join(f'<th style="{th}">{h}</th>' for h in heads)
+    def header(h):
+        if "CE" in h:   # call columns: green, bold
+            return f'<th style="{th}background:#dcfce7;color:#15803d;font-weight:800;font-size:11px">{h}</th>'
+        if "PE" in h:   # put columns: red, bold
+            return f'<th style="{th}background:#fee2e2;color:#b91c1c;font-weight:800;font-size:11px">{h}</th>'
+        return f'<th style="{th}">{h}</th>'
+    head = "".join(header(h) for h in heads)
     return ('<div style="max-height:460px;overflow:auto;border:1px solid #dde5f0;border-radius:6px;background:#fff">'
             '<table style="border-collapse:collapse;width:100%;font-family:sans-serif">'
             f'<thead style="position:sticky;top:0;z-index:1"><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
