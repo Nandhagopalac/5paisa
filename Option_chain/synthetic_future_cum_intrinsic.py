@@ -11,7 +11,7 @@ import streamlit as st
 
 from Option_chain.synthetic_future import INDIA_TIME, leg_values, load_history
 
-REFRESH_SECONDS = 15
+REFRESH_SECONDS = 1
 
 
 def today_readings(history, day):

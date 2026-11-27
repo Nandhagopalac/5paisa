@@ -313,7 +313,7 @@ def render_synthetic_tab(client):
             # would make Streamlit jump back to the first ("Live") tab.
             st.fragment(_controls)(expiries)
             st.fragment(run_every=LIVE_REFRESH_SECONDS)(_live)(client, contracts)
-            render_cum_intrinsic()  # cumulative intrinsic, refreshed every 15 s
+            render_cum_intrinsic()  # cumulative intrinsic, refreshed every second
             st.fragment(run_every=5)(_history)()
         else:  # old Streamlit: one pass per rerun
             _controls(expiries)
