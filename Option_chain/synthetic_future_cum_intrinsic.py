@@ -58,6 +58,9 @@ def add_second(now, ce_intrinsic, pe_intrinsic, only_market_hours=True):
             del _state[old]  # a new day starts from zero
         state = _state.setdefault(day, _load(day))
         if second != state["last_second"] and (in_market_hours(now) or not only_market_hours):
+            # signal: this second's intrinsic vs the previous second's, CE and PE separately
+            state["prev_ce"], state["prev_pe"] = state.get("cur_ce"), state.get("cur_pe")
+            state["cur_ce"], state["cur_pe"] = float(ce_intrinsic), float(pe_intrinsic)
             state["ce"] += float(ce_intrinsic)
             state["pe"] += float(pe_intrinsic)
             state["count"] += 1
@@ -67,6 +70,24 @@ def add_second(now, ce_intrinsic, pe_intrinsic, only_market_hours=True):
                 state["saved_at"] = now.timestamp()
                 _save(day, state)
         return dict(state)
+
+
+def signal(previous, current):
+    """'BUY' when the intrinsic value rose versus the previous second, otherwise 'NO BUY'."""
+    return "BUY" if previous is not None and current is not None and current > previous else "NO BUY"
+
+
+def _badge(label, previous, current):
+    text = signal(previous, current)
+    detail = "—" if previous is None else f"{previous:,.2f} → {current:,.2f}"
+    if text == "BUY":
+        box = ('<div style="background:#16a36a;color:#fff;font-weight:800;font-size:15px;padding:3px 12px;'
+               'border-radius:6px;display:inline-block;letter-spacing:.5px">✔ BUY</div>')
+    else:
+        box = ('<div style="background:#f1f5f9;color:#94a3b8;font-weight:600;font-size:13px;padding:3px 12px;'
+               'border-radius:6px;display:inline-block">NO BUY</div>')
+    return (f'<div style="min-width:130px"><div style="font-size:10px;color:#64748b">{html.escape(label)}</div>'
+            f'{box}<div style="font-size:10px;color:#64748b;margin-top:2px">{detail}</div></div>')
 
 
 def cum_html(state, now):
@@ -84,6 +105,8 @@ def cum_html(state, now):
         + cell("Cumulative CALL intrinsic", f'{state["ce"]:,.2f}', "#16a36a", "sum of every second")
         + cell("Cumulative PUT intrinsic", f'{state["pe"]:,.2f}', "#e34b4b", "sum of every second")
         + cell("PUT − CALL", f'{net:+,.2f}', "#2563eb", bias)
+        + _badge("CALL intrinsic vs previous second", state.get("prev_ce"), state.get("cur_ce"))
+        + _badge("PUT intrinsic vs previous second", state.get("prev_pe"), state.get("cur_pe"))
         + cell("Seconds counted", f'{state["count"]:,}', sub=f"since {since} · now {now:%H:%M:%S}")
         + '</div></div>')
 

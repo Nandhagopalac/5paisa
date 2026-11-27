@@ -43,3 +43,18 @@ class CumTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SignalTests(unittest.TestCase):
+    def setUp(self):
+        ci._state.clear()
+        self.tmp = tempfile.TemporaryDirectory()
+        ci.STATE_DIR = Path(self.tmp.name)
+
+    def test_buy_when_rising_else_no_buy(self):
+        ci.add_second(at(9, 15, 0), 10, 5)
+        s = ci.add_second(at(9, 15, 1), 15, 3)
+        self.assertEqual(ci.signal(s["prev_ce"], s["cur_ce"]), "BUY")
+        self.assertEqual(ci.signal(s["prev_pe"], s["cur_pe"]), "NO BUY")
+        self.assertEqual(ci.signal(10, 10), "NO BUY")
+        self.assertEqual(ci.signal(None, 4), "NO BUY")
