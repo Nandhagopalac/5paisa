@@ -62,9 +62,9 @@ def _table(frame):
             f'<td style="{td}">{num(r.pe_intrinsic)}</td>{sig(r.ce_signal, 'CE')}{sig(r.pe_signal, 'PE')}'
             f'<td style="{td}">{num(r.cum_ce)}</td><td style="{td}">{num(r.cum_pe)}</td></tr>')
     def header(h):
-        if "CE" in h:   # call columns: green, bold
+        if h == "CE signal":   # only the two signal headers are coloured: CE green, bold
             return f'<th style="{th}background:#dcfce7;color:#15803d;font-weight:800;font-size:11px">{h}</th>'
-        if "PE" in h:   # put columns: red, bold
+        if h == "PE signal":   # PE red, bold
             return f'<th style="{th}background:#fee2e2;color:#b91c1c;font-weight:800;font-size:11px">{h}</th>'
         return f'<th style="{th}">{h}</th>'
     head = "".join(header(h) for h in heads)
