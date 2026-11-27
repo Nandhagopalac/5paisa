@@ -22,7 +22,7 @@ from Option_chain.synthetic_future import (
 
 REFRESH_SECONDS = 1
 SAVE_EVERY_SECONDS = 5
-LOOKBACK = 20  # BUY needs the current value above each of the last 20 entries
+LOOKBACK = 10  # BUY needs the current value above each of the last LOOKBACK entries
 STATE_DIR = HISTORY_PATH.parent
 
 _lock = threading.Lock()

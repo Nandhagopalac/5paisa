@@ -55,14 +55,14 @@ class SignalTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_signal_rule(self):
-        window = [5.0] * 19 + [10.0]
+        window = [5.0] * 9 + [10.0]
         self.assertEqual(ci.signal(window, 11), "BUY")
         self.assertEqual(ci.signal(window, 10), "NO BUY")       # equal to the highest: no buy
-        self.assertEqual(ci.signal(window[:19], 99), "NO BUY")  # window not full yet
+        self.assertEqual(ci.signal(window[:9], 99), "NO BUY")  # window not full yet
         self.assertEqual(ci.signal(window, None), "NO BUY")
 
     def test_needs_to_beat_all_last_20_not_just_the_last(self):
-        values = [10] * 20 + [3, 8]   # 8 beats the previous entry (3) but not the 10s
+        values = [10] * 10 + [3, 8]   # 8 beats the previous entry (3) but not the 10s
         for i, v in enumerate(values):
             s = ci.add_second(at(9, 15, i), v, 0)
         self.assertEqual(s["sig_ce"], "NO BUY")
@@ -70,7 +70,7 @@ class SignalTests(unittest.TestCase):
         self.assertEqual(s["sig_ce"], "BUY")
 
     def test_window_restored_after_restart(self):
-        for i in range(21):
+        for i in range(11):
             ci.add_second(at(9, 15, i), 5, 0, extra={})
         ci._state.clear()
         s = ci.add_second(at(9, 16, 0), 6, 0, extra={})
