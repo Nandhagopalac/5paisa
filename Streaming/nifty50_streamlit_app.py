@@ -47,6 +47,11 @@ except Exception as _summary_import_error:  # keep the live dashboard working
     def render_synthetic_summary():
         st.error(f"Synthetic summary could not load: {_SUMMARY_IMPORT_ERROR}")
 try:
+    from Rulebased_trading.snapshot import write_snapshot as write_rules_snapshot
+except Exception:  # the dashboard works without the trader
+    def write_rules_snapshot(_payload):
+        return None
+try:
     from Option_chain.synthetic_future_signal_history import (
         render_second_by_second, render_signal_history_tab,
     )
@@ -704,6 +709,14 @@ def live_view(part="all"):
     unch = len(rows) - gainers - losers
     top5, chart_df, symbols = update_history(rows)
     net = sum(r["imp"] or 0 for r in top5)
+    try:  # share the numbers your trading rules use with Rulebased_trading (read once a second)
+        write_rules_snapshot({
+            "ts": time.time(), "market_open": bool(is_open), "net_impact": net,
+            "gainers": gainers, "losers": losers, "unchanged": unch,
+            "top5": [{"sym": r["sym"], "pct": r["pct"], "imp": r["imp"]} for r in top5],
+        })
+    except Exception:
+        pass
 
     live = st.session_state.data_source.startswith("Live")
     bias_tone = "green" if net > 0 else "red" if net < 0 else ""
