@@ -775,10 +775,12 @@ def main():
                 st.session_state.req_list,
             ) = load_nifty50_data()
 
-    live_tab, synthetic_tab, signal_tab = st.tabs(
-        ["📊 Live", "🧭 Synthetic future & strike monitor", "🕘 History details"])
+    live_tab, signal_tab = st.tabs(["📊 Live", "🕘 History details"])
 
     with signal_tab:
+        # Synthetic future & strike monitor (expiry / fixed-strike controls, live card, history)
+        render_synthetic_tab(st.session_state.client)
+        st.divider()
         render_signal_history_tab()
         st.divider()
         # NSE top-20 history (it has its own expander, so it is not wrapped in one)
@@ -786,9 +788,6 @@ def main():
             st.fragment(run_every=60)(render_history)()
         else:
             render_history()
-
-    with synthetic_tab:
-        render_synthetic_tab(st.session_state.client)
 
     with live_tab:
         if hasattr(st, "fragment"):
