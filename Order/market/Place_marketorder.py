@@ -36,6 +36,15 @@ def positive_int(value):
     return number
 
 
+def is_ip_authorization_denial(message):
+    text = str(message or "").lower()
+    return (
+        "access denied" in text
+        and "ip" in text
+        and ("not authorized" in text or "unauthorized" in text)
+    )
+
+
 def nonempty_symbol(value):
     symbol = value.strip()
     if not symbol:
@@ -202,7 +211,14 @@ def main():
 
     message = order_result.get("Message") or head.get("statusDescription")
     print(f"\nNOT placed: {message}")
-    if head.get("status") == "2" or "Invalid Head" in str(message):
+    if is_ip_authorization_denial(message):
+        print(
+            "Hint: 5paisa rejected the request because this machine's public IP "
+            "is not authorized for the API account. Ask 5paisa to allowlist the "
+            "exact public IP shown above for this API app/account; use a static "
+            "public IP if it changes. This cannot be fixed by changing the order script."
+        )
+    elif head.get("status") == "2" or "Invalid Head" in str(message):
         print("Hint: USER_KEY (app key) in the request head may be wrong.")
     elif message == "Authentication Fails":
         print("Hint: access token is expired/invalid; log in again.")
