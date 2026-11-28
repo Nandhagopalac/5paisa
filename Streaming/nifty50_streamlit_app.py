@@ -760,6 +760,20 @@ def live_view(part="all"):
     render_derivatives_volume()
 
 
+# Split screen / windows under 1700 px: the right column would be too narrow for the synthetic
+# future table, so the two columns stack (NIFTY 50 first, the synthetic table full width below it).
+STACK_CSS = """<style>
+@media (max-width: 1700px) {
+  div[class*="st-key-livecols"] [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; }
+  div[class*="st-key-livecols"] [data-testid="stColumn"],
+  div[class*="st-key-livecols"] [data-testid="column"] {
+    flex: 1 1 100% !important; width: 100% !important; min-width: 100% !important;
+  }
+  div[class*="st-key-livecols"] [data-testid="stSelectbox"] { max-width: 260px; }
+}
+</style>"""
+
+
 def live_footer():
     """Full-width NSE equity derivatives card under the NIFTY 50 / synthetic future row."""
     st.divider()
@@ -796,11 +810,13 @@ def main():
         if hasattr(st, "fragment"):
             # NIFTY 50 (2 tables + cards) on the left, the synthetic future table right beside it.
             # Columns stack on a narrow / split-screen window.
-            left_col, right_col = st.columns([2.6, 1])
-            with left_col:
-                st.fragment(run_every=REFRESH_SECONDS)(live_view)("left")
-            with right_col:
-                render_panel_tab(st.session_state.client)
+            st.markdown(STACK_CSS, unsafe_allow_html=True)
+            with st.container(key="livecols"):
+                left_col, right_col = st.columns([2.6, 1])
+                with left_col:
+                    st.fragment(run_every=REFRESH_SECONDS)(live_view)("left")
+                with right_col:
+                    render_panel_tab(st.session_state.client)
             live_area = st.container()
             with live_area:
                 st.fragment(run_every=REFRESH_SECONDS)(live_footer)()
