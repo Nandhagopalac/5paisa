@@ -38,8 +38,8 @@ def summarize(frame):
 
 
 def _table(frame):
-    th = "padding:3px 7px;border:1px solid #d5dce8;font-size:10px;color:#334155;white-space:nowrap;background:#f8fafc;"
-    td = "padding:2px 7px;border:1px solid #e3e8f0;font-size:11px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;"
+    th = "padding:2px 4px;border:1px solid #d5dce8;font-size:9px;color:#334155;white-space:nowrap;background:#f8fafc;"
+    td = "padding:1px 4px;border:1px solid #e3e8f0;font-size:10px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;"
     heads = ["Time", "NIFTY", "Strike", "CE", "PE", "CE intrinsic", "PE intrinsic", "CE signal", "PE signal",
              "Cum CE", "Cum PE"]
     body = []
@@ -63,12 +63,12 @@ def _table(frame):
             f'<td style="{td}">{num(r.cum_ce)}</td><td style="{td}">{num(r.cum_pe)}</td></tr>')
     def header(h):
         if h == "CE signal":   # only the two signal headers are coloured: CE green, bold
-            return f'<th style="{th}background:#dcfce7;color:#15803d;font-weight:800;font-size:11px">{h}</th>'
+            return f'<th style="{th}background:#dcfce7;color:#15803d;font-weight:800;font-size:10px">{h}</th>'
         if h == "PE signal":   # PE red, bold
-            return f'<th style="{th}background:#fee2e2;color:#b91c1c;font-weight:800;font-size:11px">{h}</th>'
+            return f'<th style="{th}background:#fee2e2;color:#b91c1c;font-weight:800;font-size:10px">{h}</th>'
         return f'<th style="{th}">{h}</th>'
     head = "".join(header(h) for h in heads)
-    return ('<div style="max-height:460px;overflow:auto;border:1px solid #dde5f0;border-radius:6px;background:#fff">'
+    return ('<div style="max-height:420px;overflow:auto;border:1px solid #dde5f0;border-radius:6px;background:#fff">'
             '<table style="border-collapse:collapse;width:100%;font-family:sans-serif">'
             f'<thead style="position:sticky;top:0;z-index:1"><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
 
@@ -123,12 +123,14 @@ def render_signal_history_tab():
 def _second_by_second():
     today = datetime.now(INDIA_TIME).date().isoformat()
     frame = load_log(today)
-    st.markdown("**Second by second (newest first)**")
+    st.markdown('<div style="font-size:12px;font-weight:700;color:#334155">'
+                'Second by second (newest first)</div>', unsafe_allow_html=True)
     if frame.empty:
         st.info("No signals recorded today yet. Seconds are recorded while the dashboard is running "
                 "(09:15 – 15:30).")
         return
-    rows = st.selectbox("Rows shown", [300, 1000, 5000, "All"], key="live_sig_rows")
+    rows = st.selectbox("Rows shown", [300, 1000, 5000, "All"], key="live_sig_rows",
+                        label_visibility="collapsed")
     ordered = frame.iloc[::-1]
     st.markdown(_table(ordered if rows == "All" else ordered.head(int(rows))), unsafe_allow_html=True)
 
