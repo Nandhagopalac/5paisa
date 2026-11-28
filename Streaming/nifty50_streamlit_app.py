@@ -65,7 +65,7 @@ from Option_chain.nse_equity_derivatives_volume import (
 
 # ---------------- Look & feel knobs (change these to resize) ----------------
 ROW_FONT_PX = 11       # font size of the stock tables (10 = smaller, 12 = bigger)
-TABLE_COLUMNS = 3      # how many side-by-side tables the 50 stocks are split into
+TABLE_COLUMNS = 2      # how many side-by-side tables the 50 stocks are split into
 REFRESH_SECONDS = 1    # how often the data area refreshes (in place, no page reload)
 DERIVATIVES_REFRESH_SECONDS = 15
 
@@ -687,7 +687,7 @@ def render_derivatives_volume():
     st.markdown(chart, unsafe_allow_html=True)
 
 
-def live_view(slots=None):
+def live_view(part="all"):
     is_open, market_status = is_market_open()
     ensure_websocket()
     process_websocket_events()
@@ -697,7 +697,8 @@ def live_view(slots=None):
     if not rows:
         st.info("No data yet: last-close snapshot could not be loaded. Retrying...")
         st.session_state.snapshot_loaded = False
-        render_derivatives_volume()
+        if part != "left":
+            render_derivatives_volume()
         return
 
     gainers = sum(1 for r in rows if r["pct"] > 0)
@@ -740,23 +741,27 @@ def live_view(slots=None):
     )
     chart = render_chart_svg(chart_df, symbols) if symbols else ""
     side = (
-        f'<div class="side{" row" if slots else ""}">'
+        f'<div class="side{" row" if part == "left" else ""}">'
         f'<div class="card"><h4>TOP 5 BY WEIGHT - IMPACT (5 MIN, pp)</h4>{chart}</div>'
         f'<div class="card"><h4>TOP 5 NOW (Chg%  Imp)</h4>{"".join(t5_rows)}</div>'
         f'<div class="card"><h4>MARKET BREADTH</h4>{breadth}</div>'
         '</div>'
     )
 
-    if slots:
-        # split layout: top bar and stock tables full width; under them the summary cards on the
-        # left and the synthetic future table on the right (that one is rendered separately)
-        slots["bar"].markdown(bar, unsafe_allow_html=True)
-        slots["main"].markdown('<div class="wrap one">' + render_tables_html(rows) + '</div>',
-                               unsafe_allow_html=True)
-        slots["side"].markdown(side, unsafe_allow_html=True)
-    else:
-        html = bar + '<div class="wrap">' + render_tables_html(rows) + side + '</div>'
-        st.markdown(html, unsafe_allow_html=True)
+    if part == "left":
+        # NIFTY 50 block only: bar, the two stock tables, and the summary cards under them.
+        # The synthetic future table sits beside it and the NSE card below (see main()).
+        st.markdown(bar + '<div class="wrap one">' + render_tables_html(rows) + side + '</div>',
+                    unsafe_allow_html=True)
+        return
+    html = bar + '<div class="wrap">' + render_tables_html(rows) + side + '</div>'
+    st.markdown(html, unsafe_allow_html=True)
+    st.divider()
+    render_derivatives_volume()
+
+
+def live_footer():
+    """Full-width NSE equity derivatives card under the NIFTY 50 / synthetic future row."""
     st.divider()
     render_derivatives_volume()
 
@@ -788,30 +793,28 @@ def main():
         render_synthetic_tab(st.session_state.client)
 
     with live_tab:
-        split = hasattr(st, "fragment")
-        slots = None
-        if split:
-            # Row 1: top bar + stock tables. Row 2: summary cards (left) | synthetic future table (right).
+        if hasattr(st, "fragment"):
+            # NIFTY 50 (2 tables + cards) on the left, the synthetic future table right beside it.
             # Columns stack on a narrow / split-screen window.
-            slots = {"bar": st.empty(), "main": st.empty()}
-            cards_col, panel_col = st.columns([1.1, 1])
-            with cards_col:
-                slots["side"] = st.empty()
-            with panel_col:
+            left_col, right_col = st.columns([2.6, 1])
+            with left_col:
+                st.fragment(run_every=REFRESH_SECONDS)(live_view)("left")
+            with right_col:
                 render_panel_tab(st.session_state.client)
-        live_area = st.container()
+            live_area = st.container()
+            with live_area:
+                st.fragment(run_every=REFRESH_SECONDS)(live_footer)()
+        else:
+            live_area = st.container()
         signal_area = st.container()   # second-by-second BUY / NO BUY table, below the NSE card
 
         with signal_area:
             render_synthetic_summary()  # synthetic card + BUY strip, then the second-by-second table
             render_second_by_second()
 
-        # Refresh only the data area, in place (no full-page reload, no scroll jump)
-        with live_area:
-            if hasattr(st, "fragment"):
-                st.fragment(run_every=REFRESH_SECONDS)(live_view)(slots)
-            else:
-                # Older Streamlit: redraw inside one placeholder
+        if not hasattr(st, "fragment"):
+            # Older Streamlit: redraw inside one placeholder
+            with live_area:
                 placeholder = st.empty()
                 while True:
                     with placeholder.container():

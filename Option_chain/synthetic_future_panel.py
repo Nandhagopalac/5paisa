@@ -195,9 +195,9 @@ def panel_html(d):
     return (f'<div style="max-width:900px;font-family:sans-serif">{title}'
             '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start">'
             f'<div style="flex:1 1 300px;min-width:0"><table style="border-collapse:collapse;width:100%;'
-            f'table-layout:fixed">{summary}</table></div>'
+            f'table-layout:fixed;margin:0">{summary}</table></div>'
             f'<div style="flex:1.3 1 380px;min-width:0"><table style="border-collapse:collapse;width:100%;'
-            f'table-layout:fixed">{"".join(chain)}</table></div></div>'
+            f'table-layout:fixed;margin:0">{"".join(chain)}</table></div></div>'
             f'<div style="font-size:10px;color:#64748b;margin-top:4px">Basis = future − synthetic future. '
             f'Chg % is against the previous close. Updated {datetime.now(INDIA_TIME):%H:%M:%S} IST.</div></div>')
 
