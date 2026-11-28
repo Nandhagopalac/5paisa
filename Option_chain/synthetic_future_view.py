@@ -22,6 +22,8 @@ from Option_chain import synthetic_future as _core
 from Option_chain.synthetic_future_cum_intrinsic import render_cum_intrinsic
 
 LIVE_REFRESH_SECONDS = 1
+# split screen / narrow window: drop the long "how it is calculated" column so the table fits
+NARROW_CSS = "<style>@media (max-width:1100px){.hn{display:none}}</style>"
 GREEN, RED, BLUE, ORANGE, PURPLE = "#16a36a", "#e34b4b", "#2563eb", "#ea580c", "#7c3aed"
 FOLLOW_ATM = "ATM (follows spot)"
 
@@ -81,7 +83,7 @@ def _calc_table(rows, max_height=None):
         f'<th style="{th}background:{call_bg};color:{GREEN}" colspan="5">CALL</th>'
         f'<th style="{th}background:{mid_bg}" rowspan="2">STRIKE</th>'
         f'<th style="{th}background:{put_bg};color:{RED}" colspan="5">PUT</th>'
-        f'<th style="{th}background:#fff" rowspan="2">How it is calculated</th></tr><tr>'
+        f'<th class="hn" style="{th}background:#fff" rowspan="2">How it is calculated</th></tr><tr>'
         + "".join(f'<th style="{th}background:{call_bg}">{h}</th>' for h in
                   ("FUTURE (Strike + IV)", "ITM / OTM", "Premium", "Intrinsic", "Extrinsic"))
         + "".join(f'<th style="{th}background:{put_bg}">{h}</th>' for h in
@@ -106,9 +108,9 @@ def _calc_table(rows, max_height=None):
             f'<td style="{td}background:{put_bg}"><b>{r["pe"]:,.2f}</b></td>'
             f'<td style="{td}background:{put_bg};text-align:center">{r["pe_state"]}</td>'
             f'<td style="{td}background:{put_bg}">{put_future}</td>'
-            f'<td style="{td}text-align:left;color:#64748b">{html.escape(r["how"])}</td></tr>')
+            f'<td class="hn" style="{td}text-align:left;color:#64748b">{html.escape(r["how"])}</td></tr>')
     box = f"max-height:{max_height}px;overflow:auto;" if max_height else "overflow-x:auto;"
-    return (f'<div style="{box}border:1px solid #dde5f0;border-radius:6px;background:#fff">'
+    return (f'{NARROW_CSS}<div style="{box}border:1px solid #dde5f0;border-radius:6px;background:#fff">'
             '<table style="border-collapse:collapse;width:100%;font-family:sans-serif">'
             f'<thead style="position:sticky;top:0;z-index:1">{head}</thead><tbody>{"".join(body)}</tbody></table></div>')
 

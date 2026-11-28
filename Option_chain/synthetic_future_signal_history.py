@@ -56,19 +56,22 @@ def _table(frame):
             return "-"
     for r in frame.itertuples():
         body.append(
-            f'<tr><td style="{td}text-align:left">{html.escape(str(r.time))}</td><td style="{td}">{num(r.spot)}</td>'
+            f'<tr><td style="{td}text-align:left">{html.escape(str(r.time))}</td><td class="hs" style="{td}">{num(r.spot)}</td>'
             f'<td style="{td}">{num(r.strike).replace(".00", "")}</td><td style="{td}">{num(r.ce)}</td>'
             f'<td style="{td}">{num(r.pe)}</td><td style="{td}">{num(r.ce_intrinsic)}</td>'
             f'<td style="{td}">{num(r.pe_intrinsic)}</td>{sig(r.ce_signal, 'CE')}{sig(r.pe_signal, 'PE')}'
-            f'<td style="{td}">{num(r.cum_ce)}</td><td style="{td}">{num(r.cum_pe)}</td></tr>')
+            f'<td class="hs" style="{td}">{num(r.cum_ce)}</td><td class="hs" style="{td}">{num(r.cum_pe)}</td></tr>')
     def header(h):
+        if h in ("Cum CE", "Cum PE", "NIFTY"):
+            return f'<th class="hs" style="{th}">{h}</th>'
         if h == "CE signal":   # only the two signal headers are coloured: CE green, bold
             return f'<th style="{th}background:#dcfce7;color:#15803d;font-weight:800;font-size:10px">{h}</th>'
         if h == "PE signal":   # PE red, bold
             return f'<th style="{th}background:#fee2e2;color:#b91c1c;font-weight:800;font-size:10px">{h}</th>'
         return f'<th style="{th}">{h}</th>'
     head = "".join(header(h) for h in heads)
-    return ('<div style="max-height:420px;overflow:auto;border:1px solid #dde5f0;border-radius:6px;background:#fff">'
+    return ('<style>@media (max-width:700px){.hs{display:none}}</style>'
+            '<div style="max-height:420px;overflow:auto;border:1px solid #dde5f0;border-radius:6px;background:#fff">'
             '<table style="border-collapse:collapse;width:100%;font-family:sans-serif">'
             f'<thead style="position:sticky;top:0;z-index:1"><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
 
