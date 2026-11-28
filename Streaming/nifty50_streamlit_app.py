@@ -760,20 +760,6 @@ def live_view(part="all"):
     render_derivatives_volume()
 
 
-# Split screen / windows under 1700 px: the right column would be too narrow for the synthetic
-# future table, so the two columns stack (NIFTY 50 first, the synthetic table full width below it).
-STACK_CSS = """<style>
-@media (max-width: 1700px) {
-  div[class*="st-key-livecols"] [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; }
-  div[class*="st-key-livecols"] [data-testid="stColumn"],
-  div[class*="st-key-livecols"] [data-testid="column"] {
-    flex: 1 1 100% !important; width: 100% !important; min-width: 100% !important;
-  }
-  div[class*="st-key-livecols"] [data-testid="stSelectbox"] { max-width: 260px; }
-}
-</style>"""
-
-
 def live_footer():
     """Full-width NSE equity derivatives card under the NIFTY 50 / synthetic future row."""
     st.divider()
@@ -808,27 +794,22 @@ def main():
 
     with live_tab:
         if hasattr(st, "fragment"):
-            # NIFTY 50 (2 tables + cards) on the left, the synthetic future table right beside it.
-            # Columns stack on a narrow / split-screen window.
-            st.markdown(STACK_CSS, unsafe_allow_html=True)
-            with st.container(key="livecols"):
-                left_col, right_col = st.columns([2.6, 1])
-                with left_col:
-                    st.fragment(run_every=REFRESH_SECONDS)(live_view)("left")
-                with right_col:
-                    render_panel_tab(st.session_state.client)
+            # NIFTY 50 (2 tables + cards), then the NSE card; the synthetic future table goes last.
+            st.fragment(run_every=REFRESH_SECONDS)(live_view)("left")
             live_area = st.container()
             with live_area:
                 st.fragment(run_every=REFRESH_SECONDS)(live_footer)()
         else:
             live_area = st.container()
-        signal_area = st.container()   # second-by-second BUY / NO BUY table, below the NSE card
+        signal_area = st.container()   # synthetic card, BUY strip and second-by-second table
 
         with signal_area:
             render_synthetic_summary()  # synthetic card + BUY strip, then the second-by-second table
             render_second_by_second()
 
-        if not hasattr(st, "fragment"):
+        if hasattr(st, "fragment"):
+            render_panel_tab(st.session_state.client)  # Synthetic future table, after "Second by second"
+        else:
             # Older Streamlit: redraw inside one placeholder
             with live_area:
                 placeholder = st.empty()
