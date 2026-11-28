@@ -14,6 +14,8 @@ import math
 from dataclasses import dataclass
 from datetime import datetime
 
+from Rulebased_trading.config import Settings
+
 LOT_SIZE = 65          # NIFTY lot size (same default as Order/market/market.ps1)
 LOTS = 1
 STRIKE_STEP = 50
@@ -62,33 +64,48 @@ def itm_strike(spot, side, step=STRIKE_STEP, steps=ITM_STEPS):
     return int((math.floor(spot / step) + 1) * step + (steps - 1) * step)
 
 
-def evaluate(side, rows, snapshot, now_seconds):
-    """All rule checks for one side. The entry is allowed only when every check is ok."""
+def evaluate(side, rows, snapshot, now_seconds, settings=None):
+    """All rule checks for one side. The entry is allowed only when every check is ok.
+
+    A rule unticked in entry_rules.md is shown as 'skipped' and counts as passed (next step)."""
+    cfg = settings or Settings()
     sign = 1 if side == "CE" else -1
+    allowed = cfg.allow_ce if side == "CE" else cfg.allow_pe
     run = streak(rows, side, now_seconds)
-    checks = [Check(f"{BUY_STREAK} BUY in a row ({side} signal)", run >= BUY_STREAK, f"{run} in a row")]
-    if snapshot is None:
+    checks = [Check(f"{side} entries switched on", allowed, "on" if allowed else "OFF in entry_rules.md"),
+              Check(f"{cfg.buy_streak} BUY in a row ({side} signal)", run >= cfg.buy_streak, f"{run} in a row")]
+    needs_data = cfg.use_top_stocks or cfg.use_impact or cfg.use_breadth
+    if snapshot is None and needs_data:
         checks.append(Check("Live dashboard data (< 5 s old)", False, "no fresh data - is the dashboard running?"))
         return checks
-    top = snapshot.get("top5") or []
-    first = top[:TOP_N]
+    snapshot = snapshot or {}
     word = "positive" if side == "CE" else "negative"
-    ok_top = len(first) == TOP_N and all(sign * float(item["pct"]) > 0 for item in first)
-    checks.append(Check(f"Top {TOP_N} of TOP 5 NOW {word}", ok_top,
-                        ", ".join(f'{item["sym"]} {float(item["pct"]):+.2f}%' for item in first) or "no data"))
+    if cfg.use_top_stocks:
+        first = (snapshot.get("top5") or [])[:cfg.top_stocks]
+        ok_top = len(first) == cfg.top_stocks and all(sign * float(item["pct"]) > 0 for item in first)
+        checks.append(Check(f"Top {cfg.top_stocks} of TOP 5 NOW {word}", ok_top,
+                            ", ".join(f'{item["sym"]} {float(item["pct"]):+.2f}%' for item in first) or "no data"))
+    else:
+        checks.append(Check("Top stocks of TOP 5 NOW", True, "skipped (unticked)"))
     net = float(snapshot.get("net_impact", 0.0))
-    checks.append(Check(f"Top-5 impact {'> 0' if side == 'CE' else '< 0'}", sign * net > 0, f"{net:+.3f} pp"))
+    if cfg.use_impact:
+        checks.append(Check(f"Top-5 impact {'> 0' if side == 'CE' else '< 0'}", sign * net > 0, f"{net:+.3f} pp"))
+    else:
+        checks.append(Check("Top-5 impact", True, "skipped (unticked)"))
     up = int(snapshot.get("gainers", 0))
-    ok_breadth = up > BREADTH_UP_MIN if side == "CE" else up <= BREADTH_UP_MIN
-    checks.append(Check(f"Market breadth: up {'>' if side == 'CE' else '<='} {BREADTH_UP_MIN}", ok_breadth,
-                        f"{up} up / {int(snapshot.get('losers', 0))} down"))
+    if cfg.use_breadth:
+        ok_breadth = up > cfg.breadth_up_min if side == "CE" else up <= cfg.breadth_up_min
+        checks.append(Check(f"Market breadth: up {'>' if side == 'CE' else '<='} {cfg.breadth_up_min}", ok_breadth,
+                            f"{up} up / {int(snapshot.get('losers', 0))} down"))
+    else:
+        checks.append(Check("Market breadth", True, "skipped (unticked)"))
     return checks
 
 
-def candidate_side(rows, now_seconds):
+def candidate_side(rows, now_seconds, need=BUY_STREAK):
     """'CE' or 'PE' when exactly one leg has the BUY streak; None when none or both (ambiguous)."""
-    ce = streak(rows, "CE", now_seconds) >= BUY_STREAK
-    pe = streak(rows, "PE", now_seconds) >= BUY_STREAK
+    ce = streak(rows, "CE", now_seconds) >= need
+    pe = streak(rows, "PE", now_seconds) >= need
     if ce == pe:
         return None
     return "CE" if ce else "PE"

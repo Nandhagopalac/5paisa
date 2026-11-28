@@ -5,7 +5,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from Option_chain.synthetic_future import INDIA_TIME
-from Rulebased_trading import rules, snapshot, trader
+from Rulebased_trading import config, rules, snapshot, trader
 
 
 def rows(*pairs, start=36000):
@@ -72,6 +72,49 @@ class RuleTests(unittest.TestCase):
         bearish = snap(net=-0.3, up=10, pcts=(-0.5, -0.3, -0.1, 0.2, 0.4))
         self.assertTrue(self.ok(rules.evaluate("PE", r, bearish, 36002)))
         self.assertFalse(self.ok(rules.evaluate("PE", r, snap(net=-0.3, up=16, pcts=(-1, -1, -1, 0, 0)), 36002)))
+
+
+class ConfigTests(unittest.TestCase):
+    def test_shipped_file_matches_defaults(self):
+        self.assertEqual(config.load_settings(), config.Settings())
+
+    def test_ticks_and_numbers(self):
+        cfg = config.parse("- [ ] use_breadth: x\n- [x] allow_pe: y\n- [ ] allow_ce: z\nbuy_streak = 5\nlast_entry = 14:45\n")
+        self.assertFalse(cfg.use_breadth)
+        self.assertFalse(cfg.allow_ce)
+        self.assertEqual((cfg.buy_streak, cfg.last_entry), (5, "14:45"))
+
+    def test_bad_lines_fail_loudly(self):
+        for bad in ("- [x] use_typo: a", "buy_streak = three", "lots = 0", "last_entry = 25:99", "nonsense = 1"):
+            with self.assertRaises(ValueError, msg=bad):
+                config.parse(bad)
+
+    def test_unticked_rule_is_skipped_and_flow_continues(self):
+        r = rows(("BUY", "NO BUY"), ("BUY", "NO BUY"), ("BUY", "NO BUY"))
+        wrong = snap(net=-0.5, up=3, pcts=(-1, -1, -1, 0, 0))        # fails all three market rules for CE
+        self.assertFalse(all(c.ok for c in rules.evaluate("CE", r, wrong, 36002)))
+        off = config.Settings(use_top_stocks=False, use_impact=False, use_breadth=False)
+        checks = rules.evaluate("CE", r, wrong, 36002, off)
+        self.assertTrue(all(c.ok for c in checks))
+        self.assertTrue(all("skipped" in c.detail for c in checks[2:]))
+        self.assertTrue(all(c.ok for c in rules.evaluate("CE", r, None, 36002, off)))   # no snapshot needed
+
+    def test_side_switched_off_and_streak_length(self):
+        r = rows(("BUY", "NO BUY"), ("BUY", "NO BUY"), ("BUY", "NO BUY"))
+        self.assertFalse(all(c.ok for c in rules.evaluate("CE", r, snap(), 36002, config.Settings(allow_ce=False))))
+        self.assertFalse(all(c.ok for c in rules.evaluate("CE", r, snap(), 36002, config.Settings(buy_streak=4))))
+        self.assertEqual(rules.candidate_side(r, 36002, need=4), None)
+
+    def test_atm_when_itm_unticked(self):
+        from tests.test_synthetic_future import make_contracts
+        contracts = make_contracts()
+        expiry = sorted(contracts["Expiry"].unique())[0]
+        self.assertEqual(trader.pick_contract(contracts, expiry, "CE", 25367.5)[0], 25350)   # ITM
+        self.assertEqual(trader.pick_contract(contracts, expiry, "CE", 25367.5,
+                                              config.Settings(use_itm=False))[0], 25350)
+        self.assertEqual(trader.pick_contract(contracts, expiry, "PE", 25367.5)[0], 25400)    # ITM above spot
+        self.assertEqual(trader.pick_contract(contracts, expiry, "PE", 25367.5,
+                                              config.Settings(use_itm=False))[0], 25350)      # ATM
 
 
 class PlumbingTests(unittest.TestCase):

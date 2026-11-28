@@ -20,7 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from Option_chain import synthetic_future as core  # noqa: E402
-from Rulebased_trading import rules  # noqa: E402
+from Rulebased_trading import config, rules  # noqa: E402
 from Rulebased_trading.snapshot import read_snapshot  # noqa: E402
 
 ORDER_SCRIPT = PROJECT_ROOT / "Order" / "market" / "Place_marketorder.py"
@@ -49,9 +49,10 @@ def read_signal_rows(day, count=8, directory=HISTORY_DIR):
     return rows
 
 
-def pick_contract(contracts, expiry, side, spot, steps=rules.ITM_STEPS):
-    """(strike, scrip code) of the in-the-money option for `side`."""
-    strike = rules.itm_strike(spot, side, steps=steps)
+def pick_contract(contracts, expiry, side, spot, settings=None):
+    """(strike, scrip code): the in-the-money option for `side` (or the ATM one if use_itm is unticked)."""
+    cfg = settings or config.Settings()
+    strike = rules.itm_strike(spot, side, steps=cfg.itm_steps) if cfg.use_itm else core.atm_strike(spot)
     codes = core.option_codes(contracts, expiry, strike)
     if codes is None:
         raise RuntimeError(f"No {side} contract for strike {strike} on {expiry}. "
@@ -59,10 +60,10 @@ def pick_contract(contracts, expiry, side, spot, steps=rules.ITM_STEPS):
     return strike, codes[0 if side == "CE" else 1]
 
 
-def order_command(scrip_code, intraday=False, live=False):
+def order_command(scrip_code, intraday=False, live=False, qty=rules.LOT_SIZE * rules.LOTS):
     """The exact command sent to your Place_marketorder.py (--confirm only in live mode)."""
     command = [sys.executable, str(ORDER_SCRIPT), "--scripcode", str(scrip_code),
-               "--qty", str(rules.LOT_SIZE * rules.LOTS), "--side", "B", "--exch", "N", "--exchtype", "D"]
+               "--qty", str(qty), "--side", "B", "--exch", "N", "--exchtype", "D"]
     if intraday:
         command.append("--intraday")
     if live:
@@ -110,6 +111,21 @@ def show(checks):
         print(f"   {'✔' if check.ok else '✘'} {check.name:<38} {check.detail}")
 
 
+def load_current_settings(last_error):
+    """(settings or None, error text). A broken entry_rules.md pauses trading instead of guessing."""
+    try:
+        return config.load_settings(), ""
+    except (ValueError, OSError) as error:
+        if str(error) != last_error:
+            print(f"\n!! {error} - fix the file; no orders while it is broken.")
+        return None, str(error)
+
+
+def describe(cfg, expiry):
+    return (f"expiry {expiry:%d %b %Y} · {cfg.lots} lot = {cfg.lots * cfg.lot_size} qty · market order · "
+            f"{'ITM' if cfg.use_itm else 'ATM'} strike · max {cfg.max_orders} orders/day · last entry {cfg.last_entry}")
+
+
 def run(args):
     contracts = core.load_contracts()
     expiries = core.upcoming_expiries(contracts)
@@ -117,13 +133,23 @@ def run(args):
     if expiry is None:
         raise RuntimeError("No upcoming NIFTY expiry in scrip_master.csv.")
     mode = "LIVE (real orders)" if args.live else "PAPER (nothing is sent)"
-    print(f"Rule-based trader · {mode} · expiry {expiry:%d %b %Y} · 1 lot = {rules.LOT_SIZE} qty · market order · "
-          f"ITM strike · max {args.max_orders} orders/day")
-    print("Needs the dashboard running. Ctrl+C to stop.\n")
+    cfg, error = load_current_settings("")
+    print(f"Rule-based trader · {mode}" + (f" · {describe(cfg, expiry)}" if cfg else ""))
+    print("Rules come from Rulebased_trading/entry_rules.md (re-read every second). "
+          "Needs the dashboard running. Ctrl+C to stop.\n")
     armed = {"CE": True, "PE": True}
     placed = 0
     last_line = ""
+    last_error = error
+    shown_cfg = cfg
     while True:
+        cfg, last_error = load_current_settings(last_error)
+        if cfg is None:
+            time.sleep(1)
+            continue
+        if shown_cfg is not None and cfg != shown_cfg:
+            print(f"\nRules changed: {describe(cfg, expiry)}")
+        shown_cfg = cfg
         moment = datetime.now(core.INDIA_TIME)
         day = moment.date().isoformat()
         seconds = rules.now_seconds(moment)
@@ -132,23 +158,24 @@ def run(args):
         for side in ("CE", "PE"):  # a leg re-arms once its BUY streak has broken
             if not signal_rows or signal_rows[-1].get("ce_signal" if side == "CE" else "pe_signal") != "BUY":
                 armed[side] = True
-        side = rules.candidate_side(signal_rows, seconds)
-        allowed, why = entry_allowed_now(moment, args.last_entry)
+        side = rules.candidate_side(signal_rows, seconds, cfg.buy_streak)
+        allowed, why = entry_allowed_now(moment, cfg.last_entry)
         if side is None:
-            line = f"{moment:%H:%M:%S}  waiting for {rules.BUY_STREAK} BUY in a row (CE or PE, not both)"
+            line = f"{moment:%H:%M:%S}  waiting for {cfg.buy_streak} BUY in a row (CE or PE, not both)"
         else:
-            checks = rules.evaluate(side, signal_rows, snapshot, seconds)
-            ready = all(c.ok for c in checks) and allowed and armed[side] and placed < args.max_orders
+            checks = rules.evaluate(side, signal_rows, snapshot, seconds, cfg)
+            ready = all(c.ok for c in checks) and allowed and armed[side] and placed < cfg.max_orders
             line = f"{moment:%H:%M:%S}  {side} signal - " + ("ALL RULES OK" if ready else "rules not all met")
             if ready:
                 print("\n" + line)
                 show(checks)
-                placed += handle_entry(args, contracts, expiry, side, signal_rows, moment, day)
+                placed += handle_entry(args, cfg, contracts, expiry, side, signal_rows, moment, day)
                 armed[side] = False
                 last_line = ""
                 continue
             if line != last_line:
-                print("\n" + line + ("" if allowed else f" ({why})"))
+                print("\n" + line + ("" if allowed else f" ({why})")
+                      + (f" (max {cfg.max_orders} orders reached)" if placed >= cfg.max_orders else ""))
                 show(checks)
         if side is None and line != last_line:
             print(line, end="\r", flush=True)
@@ -156,42 +183,43 @@ def run(args):
         time.sleep(1)
 
 
-def handle_entry(args, contracts, expiry, side, signal_rows, moment, day):
+def handle_entry(args, cfg, contracts, expiry, side, signal_rows, moment, day):
     """Show the order, wait for the keypress, re-check the rules, then send. Returns 1 if sent."""
     spot = float(signal_rows[-1]["spot"])
-    strike, code = pick_contract(contracts, expiry, side, spot)
-    qty = rules.LOT_SIZE * rules.LOTS
+    strike, code = pick_contract(contracts, expiry, side, spot, cfg)
+    qty = cfg.lots * cfg.lot_size
     mode = "LIVE" if args.live else "PAPER"
     print(f"\n   ORDER  BUY {side} {strike} · expiry {expiry:%d %b %Y} · scrip {code} · "
-          f"{rules.LOTS} lot ({qty}) · MARKET · NIFTY {spot:,.2f} · {mode}")
+          f"{cfg.lots} lot ({qty}) · MARKET · {'intraday' if cfg.intraday else 'delivery/NRML'} · "
+          f"NIFTY {spot:,.2f} · {mode}")
     if not press_key("   Press  Y  to place this market order, any other key to skip: "):
         print("   Skipped. Nothing sent.")
         log_trade([f"{moment:%H:%M:%S}", side, strike, code, qty, mode, "skipped"], day)
         return 0
-    # the market moved while you decided: the rules must still hold right now
+    # the market (or your rules file) changed while you decided: everything must still hold right now
     now = datetime.now(core.INDIA_TIME)
+    fresh, _ = load_current_settings("")
     rows = read_signal_rows(day)
     snapshot, _ = read_snapshot()
-    still = all(c.ok for c in rules.evaluate(side, rows, snapshot, rules.now_seconds(now)))
-    if not still or not entry_allowed_now(now, args.last_entry)[0]:
+    still = fresh is not None and all(
+        c.ok for c in rules.evaluate(side, rows, snapshot, rules.now_seconds(now), fresh))
+    if not still or not entry_allowed_now(now, fresh.last_entry)[0] or (fresh.lots, fresh.lot_size) != (cfg.lots, cfg.lot_size):
         print("   Rules no longer hold - order NOT sent.")
         log_trade([f"{now:%H:%M:%S}", side, strike, code, qty, mode, "cancelled: rules changed"], day)
         return 0
     env = dict(os.environ, FP_CONFIG=str(PROJECT_ROOT / "config.ini"))
-    result = subprocess.run(order_command(code, args.intraday, args.live), env=env, cwd=str(PROJECT_ROOT))
+    result = subprocess.run(order_command(code, cfg.intraday, args.live, qty), env=env, cwd=str(PROJECT_ROOT))
     status = "sent" if (args.live and result.returncode == 0) else ("failed" if args.live else "paper")
     log_trade([f"{now:%H:%M:%S}", side, strike, code, qty, mode, status], day)
     return 1 if args.live and result.returncode == 0 else 0
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Rule-based NIFTY option entries (asks before each order).")
+    parser = argparse.ArgumentParser(
+        description="Rule-based NIFTY option entries (asks before each order). Rules: entry_rules.md")
     parser.add_argument("--live", action="store_true", help="send real orders (default is paper mode)")
     parser.add_argument("--expiry", type=lambda text: datetime.strptime(text, "%Y-%m-%d").date(),
                         help="YYYY-MM-DD (default: nearest expiry)")
-    parser.add_argument("--intraday", action="store_true", help="intraday (MIS) instead of delivery/NRML")
-    parser.add_argument("--max-orders", type=int, default=3, help="stop after this many orders in a day")
-    parser.add_argument("--last-entry", default="15:15", help="no new entries from this time (HH:MM)")
     args = parser.parse_args()
     try:
         run(args)
