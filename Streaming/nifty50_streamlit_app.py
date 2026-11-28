@@ -40,6 +40,16 @@ except Exception as _panel_import_error:  # keep the live dashboard working
     def render_panel_tab(_client):
         st.error(f"Synthetic future table could not load: {_PANEL_IMPORT_ERROR}")
 try:
+    from Option_chain.live_pages import render_history_page, render_live_page
+except Exception as _pages_import_error:  # keep the live dashboard working
+    _PAGES_IMPORT_ERROR = _pages_import_error
+
+    def render_live_page(_client):
+        st.error(f"Live decision page could not load: {_PAGES_IMPORT_ERROR}")
+
+    def render_history_page(_extra=None):
+        st.error(f"History page could not load: {_PAGES_IMPORT_ERROR}")
+try:
     from Option_chain.synthetic_future_signal_history import render_signal_history_tab
 except Exception as _signal_import_error:  # keep the live dashboard working
     _SIGNAL_IMPORT_ERROR = _signal_import_error
@@ -749,28 +759,17 @@ def main():
                 st.session_state.req_list,
             ) = load_nifty50_data()
 
-    live_tab, synthetic_tab, panel_tab, signal_tab = st.tabs(
-        ["📊 Live", "🧭 Synthetic future & strike monitor", "🧮 Synthetic future table",
-         "📈 Intrinsic signal history"])
+    decision_tab, live_tab, history_tab = st.tabs(
+        ["⚡ Live decision", "📊 NIFTY 50 live", "🕘 History"])
 
-    with signal_tab:
-        render_signal_history_tab()
+    with decision_tab:
+        render_live_page(st.session_state.client)
 
-    with panel_tab:
-        render_panel_tab(st.session_state.client)
-
-    with synthetic_tab:
-        render_synthetic_tab(st.session_state.client)
+    with history_tab:
+        render_history_page(render_history)
 
     with live_tab:
         live_area = st.container()
-        history_area = st.container()  # same page, directly below the live view
-
-        with history_area:
-            if hasattr(st, "fragment"):
-                st.fragment(run_every=60)(render_history)()
-            else:
-                render_history()
 
         # Refresh only the data area, in place (no full-page reload, no scroll jump)
         with live_area:
