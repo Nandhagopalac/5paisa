@@ -284,6 +284,18 @@ def rows_html(d, row):
             + (row("OI feed update", html.escape(d["oi_update"])) if d.get("oi_update") else ""))
 
 
+def bias_card_html(d):
+    """Small 'PE - CE OI' line for a dashboard card, or '' while OI is not available."""
+    oi = (d or {}).get("oi")
+    if not oi or not oi.get("available"):
+        return ""
+    text, colour = bias(oi["ce"], oi["pe"])
+    return (f'<div style="font-size:12px;font-weight:700;color:{colour};padding:2px 0">'
+            f'{_lakh(oi["pe"] - oi["ce"], True)} · {html.escape(text)}</div>'
+            f'<div style="font-size:10px;color:#64748b">CE {_lakh(oi["ce"])} · PE {_lakh(oi["pe"])} '
+            f'· ATM ±{OI_STRIKES_EACH_SIDE}</div>')
+
+
 # ---------------- stand-alone collector ----------------
 def main():
     """Save an OI snapshot every 5 minutes (09:15-15:30) even when the dashboard is closed."""

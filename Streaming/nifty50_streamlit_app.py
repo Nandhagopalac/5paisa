@@ -47,6 +47,11 @@ except Exception as _summary_import_error:  # keep the live dashboard working
     def render_synthetic_summary():
         st.error(f"Synthetic summary could not load: {_SUMMARY_IMPORT_ERROR}")
 try:
+    from Option_chain.synthetic_future_cum_oi import bias_card_html
+except Exception:  # the card simply stays hidden
+    def bias_card_html(_data):
+        return ""
+try:
     from Option_chain.synthetic_future_signal_history import (
         render_second_by_second, render_signal_history_tab,
     )
@@ -738,12 +743,14 @@ def live_view(part="all"):
         f'<div class="legend2"><span>▲ {gainers}</span><span>● {unch}</span><span>▼ {losers}</span></div>'
     )
     chart = render_chart_svg(chart_df, symbols) if symbols else ""
+    oi_line = bias_card_html(st.session_state.get("pn_data"))  # from the synthetic future table
     side = (
         '<div class="side">'
         f'<div class="card"><h4>TOP 5 BY WEIGHT - IMPACT (5 MIN, pp)</h4>{chart}</div>'
         f'<div class="card"><h4>TOP 5 NOW (Chg%  Imp)</h4>{"".join(t5_rows)}</div>'
         f'<div class="card"><h4>MARKET BREADTH</h4>{breadth}</div>'
-        '</div>'
+        + (f'<div class="card"><h4>PE − CE OI</h4>{oi_line}</div>' if oi_line else "")
+        + '</div>'
     )
 
     if part == "left":
