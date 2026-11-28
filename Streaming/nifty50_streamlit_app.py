@@ -40,9 +40,14 @@ except Exception as _panel_import_error:  # keep the live dashboard working
     def render_panel_tab(_client):
         st.error(f"Synthetic future table could not load: {_PANEL_IMPORT_ERROR}")
 try:
-    from Option_chain.synthetic_future_signal_history import render_signal_history_tab
+    from Option_chain.synthetic_future_signal_history import (
+        render_second_by_second, render_signal_history_tab,
+    )
 except Exception as _signal_import_error:  # keep the live dashboard working
     _SIGNAL_IMPORT_ERROR = _signal_import_error
+
+    def render_second_by_second():
+        st.error(f"Signal table could not load: {_SIGNAL_IMPORT_ERROR}")
 
     def render_signal_history_tab():
         st.error(f"Signal history tab could not load: {_SIGNAL_IMPORT_ERROR}")
@@ -765,12 +770,16 @@ def main():
     with live_tab:
         live_area = st.container()
         history_area = st.container()  # same page, directly below the live view
+        signal_area = st.container()   # second-by-second BUY / NO BUY table, below the NSE history
 
         with history_area:
             if hasattr(st, "fragment"):
                 st.fragment(run_every=60)(render_history)()
             else:
                 render_history()
+
+        with signal_area:
+            render_second_by_second()
 
         # Refresh only the data area, in place (no full-page reload, no scroll jump)
         with live_area:

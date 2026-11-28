@@ -118,3 +118,24 @@ def render_signal_history_tab():
         st.fragment(run_every=2)(_body)()
     else:
         _body()
+
+
+def _second_by_second():
+    today = datetime.now(INDIA_TIME).date().isoformat()
+    frame = load_log(today)
+    st.markdown("**Second by second (newest first)**")
+    if frame.empty:
+        st.info("No signals recorded today yet. Seconds are recorded while the dashboard is running "
+                "(09:15 – 15:30).")
+        return
+    rows = st.selectbox("Rows shown", [300, 1000, 5000, "All"], key="live_sig_rows")
+    ordered = frame.iloc[::-1]
+    st.markdown(_table(ordered if rows == "All" else ordered.head(int(rows))), unsafe_allow_html=True)
+
+
+def render_second_by_second():
+    """Only today's second-by-second table (used on the Live page)."""
+    if hasattr(st, "fragment"):
+        st.fragment(run_every=2)(_second_by_second)()
+    else:
+        _second_by_second()
