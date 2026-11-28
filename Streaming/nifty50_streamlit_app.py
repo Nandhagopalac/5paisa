@@ -790,14 +790,9 @@ def main():
         split = hasattr(st, "fragment")
         slots = None
         if split:
-            # Left: NIFTY 50 tables + summary cards. Right: the synthetic future table.
-            # (columns stack on a narrow / split-screen window)
-            slots = {"bar": st.empty()}
-            left_col, right_col = st.columns([3.1, 1.9])
-            with left_col:
-                slots["main"] = st.empty()
-            with right_col:
-                render_panel_tab(st.session_state.client)
+            # Stock tables + summary cards on top, the synthetic future table directly under them
+            slots = {"bar": st.empty(), "main": st.empty()}
+            render_panel_tab(st.session_state.client)
         live_area = st.container()
         signal_area = st.container()   # second-by-second BUY / NO BUY table, below the NSE card
 
