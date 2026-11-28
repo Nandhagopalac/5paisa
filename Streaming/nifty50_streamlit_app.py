@@ -132,8 +132,8 @@ td.dim { color: #94a3b8 !important; }
 
 .side { display: flex; flex-direction: column; gap: 6px; }
 .wrap.one { grid-template-columns: 1fr; }
-.side.row { flex-direction: row; }
-.side.row .card { flex: 1; min-width: 0; }
+.side.row { flex-direction: row; flex-wrap: wrap; }
+.side.row .card { flex: 1 1 220px; min-width: 0; }
 .card { background: #ffffff; border: 1px solid #dde5f0; border-radius: 8px; padding: 6px 8px; }
 .card h4 { margin: 0 0 3px 0; font-size: 0.72rem; color: #475569; font-weight: 700; letter-spacing: 0.02em; }
 .t5 { display: flex; align-items: center; font-size: 0.72rem; padding: 1px 0; color: #1e293b; }
@@ -748,11 +748,12 @@ def live_view(slots=None):
     )
 
     if slots:
-        # split layout: top bar full width, stock tables with the summary cards under them on the
-        # left; the synthetic future table sits in the right-hand column (rendered separately)
+        # split layout: top bar and stock tables full width; under them the summary cards on the
+        # left and the synthetic future table on the right (that one is rendered separately)
         slots["bar"].markdown(bar, unsafe_allow_html=True)
-        slots["main"].markdown('<div class="wrap one">' + render_tables_html(rows) + side + '</div>',
+        slots["main"].markdown('<div class="wrap one">' + render_tables_html(rows) + '</div>',
                                unsafe_allow_html=True)
+        slots["side"].markdown(side, unsafe_allow_html=True)
     else:
         html = bar + '<div class="wrap">' + render_tables_html(rows) + side + '</div>'
         st.markdown(html, unsafe_allow_html=True)
@@ -790,9 +791,14 @@ def main():
         split = hasattr(st, "fragment")
         slots = None
         if split:
-            # Stock tables + summary cards on top, the synthetic future table directly under them
+            # Row 1: top bar + stock tables. Row 2: summary cards (left) | synthetic future table (right).
+            # Columns stack on a narrow / split-screen window.
             slots = {"bar": st.empty(), "main": st.empty()}
-            render_panel_tab(st.session_state.client)
+            cards_col, panel_col = st.columns([1.1, 1])
+            with cards_col:
+                slots["side"] = st.empty()
+            with panel_col:
+                render_panel_tab(st.session_state.client)
         live_area = st.container()
         signal_area = st.container()   # second-by-second BUY / NO BUY table, below the NSE card
 
