@@ -320,3 +320,23 @@ def render_synthetic_tab(client):
             _live(client, contracts)
             render_cum_intrinsic()
             _history()
+
+
+def render_synthetic_summary():
+    """Display-only copy of the live synthetic card + cumulative BUY strip (for the Live page).
+
+    It reads the rows the monitor tab already fetched each second, so it adds no extra price
+    requests. The expiry / fixed strike are changed on the monitor tab."""
+    def run():
+        if st.session_state.get("syn_error"):
+            st.warning(st.session_state.syn_error)
+        rows = st.session_state.get("syn_rows")
+        if rows:
+            st.markdown(_live_card(rows), unsafe_allow_html=True)
+        else:
+            st.info("Waiting for prices...")
+    if hasattr(st, "fragment"):
+        st.fragment(run_every=LIVE_REFRESH_SECONDS)(run)()
+    else:
+        run()
+    render_cum_intrinsic()

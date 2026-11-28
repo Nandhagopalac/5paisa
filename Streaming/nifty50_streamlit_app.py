@@ -40,6 +40,13 @@ except Exception as _panel_import_error:  # keep the live dashboard working
     def render_panel_tab(_client):
         st.error(f"Synthetic future table could not load: {_PANEL_IMPORT_ERROR}")
 try:
+    from Option_chain.synthetic_future_view import render_synthetic_summary
+except Exception as _summary_import_error:  # keep the live dashboard working
+    _SUMMARY_IMPORT_ERROR = _summary_import_error
+
+    def render_synthetic_summary():
+        st.error(f"Synthetic summary could not load: {_SUMMARY_IMPORT_ERROR}")
+try:
     from Option_chain.synthetic_future_signal_history import (
         render_second_by_second, render_signal_history_tab,
     )
@@ -778,6 +785,7 @@ def main():
         signal_area = st.container()   # second-by-second BUY / NO BUY table, below the NSE card
 
         with signal_area:
+            render_synthetic_summary()  # synthetic card + BUY strip, then the second-by-second table
             render_second_by_second()
 
         # Refresh only the data area, in place (no full-page reload, no scroll jump)
