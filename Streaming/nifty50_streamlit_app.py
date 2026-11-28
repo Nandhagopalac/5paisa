@@ -756,10 +756,16 @@ def main():
 
     live_tab, synthetic_tab, panel_tab, signal_tab = st.tabs(
         ["📊 Live", "🧭 Synthetic future & strike monitor", "🧮 Synthetic future table",
-         "📈 Intrinsic signal history"])
+         "🕘 History details"])
 
     with signal_tab:
         render_signal_history_tab()
+        st.divider()
+        # NSE top-20 history (it has its own expander, so it is not wrapped in one)
+        if hasattr(st, "fragment"):
+            st.fragment(run_every=60)(render_history)()
+        else:
+            render_history()
 
     with panel_tab:
         render_panel_tab(st.session_state.client)
@@ -769,14 +775,7 @@ def main():
 
     with live_tab:
         live_area = st.container()
-        history_area = st.container()  # same page, directly below the live view
-        signal_area = st.container()   # second-by-second BUY / NO BUY table, below the NSE history
-
-        with history_area:
-            if hasattr(st, "fragment"):
-                st.fragment(run_every=60)(render_history)()
-            else:
-                render_history()
+        signal_area = st.container()   # second-by-second BUY / NO BUY table, below the NSE card
 
         with signal_area:
             render_second_by_second()
