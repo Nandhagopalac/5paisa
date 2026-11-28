@@ -191,9 +191,13 @@ def panel_html(d):
 
     title = (f'<div style="background:{TITLE_BG};color:#fff;text-align:center;padding:3px;font-weight:700;'
              f'font-size:11px;border:1px solid #fff">NIFTY | Synthetic Future | Exp {d["expiry"]:%d-%m-%y}</div>')
-    return (f'<div style="max-width:430px;font-family:sans-serif">{title}'
-            f'<table style="border-collapse:collapse;width:100%;table-layout:fixed">{summary}</table>'
-            f'<table style="border-collapse:collapse;width:100%;table-layout:fixed">{"".join(chain)}</table>'
+    # summary on the left, strike chain on the right; wraps to one column in a narrow / split window
+    return (f'<div style="max-width:900px;font-family:sans-serif">{title}'
+            '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start">'
+            f'<div style="flex:1 1 300px;min-width:0"><table style="border-collapse:collapse;width:100%;'
+            f'table-layout:fixed">{summary}</table></div>'
+            f'<div style="flex:1.3 1 380px;min-width:0"><table style="border-collapse:collapse;width:100%;'
+            f'table-layout:fixed">{"".join(chain)}</table></div></div>'
             f'<div style="font-size:10px;color:#64748b;margin-top:4px">Basis = future − synthetic future. '
             f'Chg % is against the previous close. Updated {datetime.now(INDIA_TIME):%H:%M:%S} IST.</div></div>')
 
