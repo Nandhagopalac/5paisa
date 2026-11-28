@@ -131,9 +131,7 @@ td.pct.dn { background: #fef2f2; font-weight: 600; }
 td.dim { color: #94a3b8 !important; }
 
 .side { display: flex; flex-direction: column; gap: 6px; }
-.wrap.one { grid-template-columns: 1fr; }
-.side.row { flex-direction: row; flex-wrap: wrap; }
-.side.row .card { flex: 1 1 220px; min-width: 0; }
+@media (max-width: 760px) { .wrap { grid-template-columns: 1fr; } .tables { grid-template-columns: 1fr; } }
 .card { background: #ffffff; border: 1px solid #dde5f0; border-radius: 8px; padding: 6px 8px; }
 .card h4 { margin: 0 0 3px 0; font-size: 0.72rem; color: #475569; font-weight: 700; letter-spacing: 0.02em; }
 .t5 { display: flex; align-items: center; font-size: 0.72rem; padding: 1px 0; color: #1e293b; }
@@ -741,7 +739,7 @@ def live_view(part="all"):
     )
     chart = render_chart_svg(chart_df, symbols) if symbols else ""
     side = (
-        f'<div class="side{" row" if part == "left" else ""}">'
+        '<div class="side">'
         f'<div class="card"><h4>TOP 5 BY WEIGHT - IMPACT (5 MIN, pp)</h4>{chart}</div>'
         f'<div class="card"><h4>TOP 5 NOW (Chg%  Imp)</h4>{"".join(t5_rows)}</div>'
         f'<div class="card"><h4>MARKET BREADTH</h4>{breadth}</div>'
@@ -749,9 +747,9 @@ def live_view(part="all"):
     )
 
     if part == "left":
-        # NIFTY 50 block only: bar, the two stock tables, and the summary cards under them.
-        # The synthetic future table sits beside it and the NSE card below (see main()).
-        st.markdown(bar + '<div class="wrap one">' + render_tables_html(rows) + side + '</div>',
+        # NIFTY 50 block only: bar, the two stock tables on the left and the three summary cards
+        # stacked on the right. The NSE card and the synthetic future table follow (see main()).
+        st.markdown(bar + '<div class="wrap">' + render_tables_html(rows) + side + '</div>',
                     unsafe_allow_html=True)
         return
     html = bar + '<div class="wrap">' + render_tables_html(rows) + side + '</div>'
